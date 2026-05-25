@@ -1,0 +1,67 @@
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+*.tmp
+env/
+tests/
+demo/
+PLANNING_LOG.md
+.claude.md
+.claude/
+paperscan\__pycache__
+PDD.docx
+PLANNING_LOG.docx
+PLANNING_LOG.md
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs & coverage
+*.log
+.coverage
+coverage.xml
+htmlcov/
+
+# Type-checker & linter caches
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# Build artefacts
+*.so
+*.whl
+site/
+pip-log.txt
+
+# Secrets — never commit
+.env.*
+!.env.example
+
+# Generated corpus documents (re-created by corpus_generator.py)
+tests/test_corpus/*.pdf
+tests/test_corpus/*.docx
+tests/test_corpus/*.pptx
+
+# Uploaded / scanned temp files
+uploads/
+
+# Doc generation utility (output files already ignored above)
+_make_docs.py
+
+# Docker local overrides
+docker-compose.override.yml

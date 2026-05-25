@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: paperscan
+    runtime: python
+    buildCommand: pip install -e .
+    startCommand: uvicorn paperscan.web.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PAPERSCAN_SKIP_OCR
+        value: "1"
+      - key: PYTHON_VERSION
+        value: "3.11.0"
