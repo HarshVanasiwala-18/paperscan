@@ -316,12 +316,17 @@ def detect_heuristics(doc: ExtractedDocument) -> list[Finding]:
         ]
         total_divergence = sum(len(h.get("content", "")) for h in ocr_only)
         if total_divergence > 500:
+            sample = " … ".join(
+                h.get("content", "")[:120].strip()
+                for h in ocr_only[:3]
+                if h.get("content", "").strip()
+            )
             findings.append(Finding(
                 layer="heuristic",
                 severity="medium",
                 category="ocr_divergence",
                 description=f"OCR text diverges significantly from text-layer extraction ({total_divergence} chars differ)",
-                evidence=f"{total_divergence} characters differ between OCR and text extraction",
+                evidence=f"{total_divergence} chars differ. Sample: {sample[:300]}" if sample else f"{total_divergence} characters differ between OCR and text extraction",
                 location="document",
                 confidence=0.65,
             ))

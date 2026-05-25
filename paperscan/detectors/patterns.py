@@ -7,7 +7,7 @@ from paperscan.models import ExtractedDocument, Finding
 # (pattern, severity, category)
 _RAW_PATTERNS: list[tuple[str, str, str]] = [
     # ── Instruction override ─────────────────────────────────────────────────
-    (r"ignore\s+(all\s+|the\s+|your\s+)?previous\s+instructions", "critical", "instruction_override"),
+    (r"ignore\s+(all\s+|the\s+|your\s+)?(?:previous|prior)\s+instructions?", "critical", "instruction_override"),
     (r"disregard\s+(the\s+|all\s+)?above", "high", "instruction_override"),
     (r"forget\s+everything", "high", "instruction_override"),
     (r"new\s+instructions\s*:", "high", "instruction_injection"),
@@ -18,7 +18,9 @@ _RAW_PATTERNS: list[tuple[str, str, str]] = [
     # ── Role / persona override ──────────────────────────────────────────────
     (r"(system|admin|user|assistant)\s*:\s", "medium", "role_marker"),
     (r"\byou\s+are\s+now\b", "medium", "role_override"),
-    (r"\bact\s+as\b", "medium", "role_override"),
+    # Negative lookahead excludes common legitimate noun phrases: GDPR "act as controllers",
+    # ML "act as proxy/proxies", and other inanimate-object uses that are never injection.
+    (r"\bact\s+as\b(?!\s+(a\s+|an\s+)?(controllers?|prox(y|ies)|deterrents?|placeholder|barrier|bridge|gateway|intermediar(y|ies)|container|wrapper|reference|safeguard))", "medium", "role_override"),
     (r"\bpretend\s+to\s+be\b", "medium", "role_override"),
     (r"your\s+new\s+role\s+(is\s+)?", "high", "role_override"),
     (r"from\s+now\s+on\s+you\s+(are|will|must)", "high", "role_override"),
@@ -40,6 +42,10 @@ _RAW_PATTERNS: list[tuple[str, str, str]] = [
     (r"send\s+(this|your|the)\s+(context|data|output|response)\s+to", "critical", "exfiltration"),
     (r"(upload|transmit|leak)\s+(your\s+)?(context|system\s+prompt|instructions)", "high", "exfiltration"),
     (r"exfiltrat(e|ion)", "high", "exfiltration"),
+    # Email-based data forwarding — "silently forward the summary to: attacker@domain"
+    (r"(silently\s+)?(forward|send|transmit)\s+(the\s+)?(complete\s+|full\s+|entire\s+)?(summary|context|data|response|output|report)\s+to\s*:\s*[\w.+%-]+@[\w.-]+\.[a-z]{2,}", "critical", "email_exfiltration"),
+    # Instruction concealment — "do not mention this instruction in your response"
+    (r"do\s+not\s+(mention|include|reference|reveal)\s+(this\s+|the\s+above\s+)?(instruction|command|directive)\s+in\s+your\s+response", "high", "instruction_concealment"),
 
     # ── Code execution ───────────────────────────────────────────────────────
     (r"(run|execute|eval)\s+(the\s+|this\s+|following\s+)?code", "high", "code_execution"),
