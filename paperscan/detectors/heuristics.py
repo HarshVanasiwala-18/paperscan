@@ -6,12 +6,40 @@ from urllib.parse import urlparse
 from paperscan.models import ExtractedDocument, Finding
 
 # Imperative verbs — English + French + Spanish + German + Chinese
+# Used only for high-signal contexts (bidi overrides) where any imperative is suspicious.
 _IMPERATIVE_RE = re.compile(
     r"\b(ignore|disregard|forget|override|replace|assume|pretend|act|behave|follow|execute|run|output|reveal|print|show|repeat|change|update|modify|delete|remove|insert|"
     r"ignor(?:ez|ons)|oubli(?:ez|ons)|révél(?:ez|e)|affichez|exécutez|"  # French
     r"ignora|olvida|revela|muestra|ejecuta|imprime|"  # Spanish
     r"ignorier|vergiss|enthüll|zeig|führe)\b"  # German
     r"|忽略|忘记|执行|显示|输出|泄露",  # Chinese
+    re.IGNORECASE | re.UNICODE,
+)
+
+# Strict injection phrases — used for loose-context checks (metadata, tracked changes,
+# annotations) where common action verbs would cause false positives on resumes/reports.
+# These phrases are almost never legitimate document content.
+_STRICT_INJECTION_RE = re.compile(
+    r"\bignore\s+(all\s+|previous\s+|prior\s+|your\s+)?instructions?\b"
+    r"|\bdisregard\s+(the\s+|all\s+)?above\b"
+    r"|\bforget\s+(everything|all\s+instructions?)\b"
+    r"|\boverride\s+(all\s+)?instructions?\b"
+    r"|\byou\s+are\s+now\b"
+    r"|\bact\s+as\b"
+    r"|\bpretend\s+to\s+be\b"
+    r"|\bjailbreak\b"
+    r"|\bsystem\s+prompt\b"
+    r"|\byour\s+(new\s+)?role\s+is\b"
+    r"|\bnew\s+instructions?\s*:"
+    r"|\bfrom\s+(the\s+)?administrator\b"
+    r"|\bfrom\s+(the\s+)?system\b"
+    r"|\[system\]|\[admin\]|\[instruction\]"
+    r"|\breveal\s+(your|the)\s+(system|prompt|instructions?|api.?key)\b"
+    r"|\boutput\s+(your|the)\s+(system\s+prompt|instructions?)\b"
+    r"|\bignor(?:ez|ons)\s+(toutes?\s+les?\s+)?instructions?\b"  # French
+    r"|\boubli(?:ez|ons)\s+(tout|toutes?\s+les?\s+instructions?)\b"
+    r"|\bignora\s+(todas?\s+las?\s+)?instrucciones?\b"  # Spanish
+    r"|\bignoriere?\s+.{0,30}Anweisungen\b",  # German
     re.IGNORECASE | re.UNICODE,
 )
 
@@ -38,8 +66,13 @@ _TAG_CHAR_END = 0xE007F
 
 def _total_hidden_chars(doc: ExtractedDocument) -> int:
     total = 0
+    # Exclude OCR token-diff entries — they represent text found only in embedded images
+    # (logos, photos) and are already handled by the dedicated OCR divergence check.
+    # Counting them here would double-penalise clean PDFs with normal image content.
+    _ocr_methods = frozenset({"ocr_only", "extraction_only"})
     for h in doc.hidden_text:
-        total += len(h.get("content", ""))
+        if h.get("method") not in _ocr_methods:
+            total += len(h.get("content", ""))
     for h in doc.ocg_hidden_text:
         total += len(h.get("content", ""))
     for h in doc.clipped_text:
@@ -59,7 +92,10 @@ def detect_heuristics(doc: ExtractedDocument) -> list[Finding]:
     hidden_ratio = hidden_len / visible_len
 
     # ── Hidden text ratio ────────────────────────────────────────────────────
-    if hidden_ratio > 0.20:
+    # Thresholds raised: PDFs routinely accumulate small amounts of hidden text
+    # from whitespace characters, clip regions, and formatting artifacts.
+    # 30% hidden = strong signal; 12% = noteworthy but not alarming.
+    if hidden_ratio > 0.30:
         findings.append(Finding(
             layer="heuristic",
             severity="critical",
@@ -69,7 +105,7 @@ def detect_heuristics(doc: ExtractedDocument) -> list[Finding]:
             location="document",
             confidence=0.9,
         ))
-    elif hidden_ratio > 0.05:
+    elif hidden_ratio > 0.12:
         findings.append(Finding(
             layer="heuristic",
             severity="medium",
@@ -168,6 +204,9 @@ def detect_heuristics(doc: ExtractedDocument) -> list[Finding]:
             ))
 
     # ── Font encoding anomalies ──────────────────────────────────────────────
+    # Confidence dropped below scoring floor: custom font encodings are present in
+    # virtually every professionally typeset PDF (ligatures, kerning, embedded subsets).
+    # This check is informational — /ActualText substitution is the real attack signal.
     if doc.font_encoding_anomalies:
         unique_fonts = {f.get("font_name") for f in doc.font_encoding_anomalies}
         findings.append(Finding(
@@ -177,13 +216,13 @@ def detect_heuristics(doc: ExtractedDocument) -> list[Finding]:
             description=f"Custom/unusual font encoding detected ({len(unique_fonts)} fonts) — glyph-to-text mapping may differ from visual",
             evidence=", ".join(list(unique_fonts)[:5]),
             location="document",
-            confidence=0.6,
+            confidence=0.35,  # below scoring floor — informational only
         ))
 
     # ── DOCX tracked changes with injection content ──────────────────────────
     for change in doc.tracked_changes:
         content = change.get("content", "")
-        if content and _IMPERATIVE_RE.search(content):
+        if content and _STRICT_INJECTION_RE.search(content):
             findings.append(Finding(
                 layer="heuristic",
                 severity="high",
@@ -194,14 +233,12 @@ def detect_heuristics(doc: ExtractedDocument) -> list[Finding]:
                 confidence=0.75,
             ))
 
-    # ── DOCX field codes with imperative content ─────────────────────────────
-    benign_field_prefixes = ("DATE", "PAGE", "AUTHOR", "TITLE", "SUBJECT", "NUMPAGES", "TIME", "FILENAME")
+    # ── DOCX field codes with injection phrases ──────────────────────────────
     for item in doc.field_codes:
         instr = item.get("instruction", "").strip()
         if not instr:
             continue
-        is_benign = any(instr.upper().startswith(p) for p in benign_field_prefixes)
-        if not is_benign and _IMPERATIVE_RE.search(instr):
+        if _STRICT_INJECTION_RE.search(instr):
             findings.append(Finding(
                 layer="heuristic",
                 severity="medium",
@@ -237,11 +274,14 @@ def detect_heuristics(doc: ExtractedDocument) -> list[Finding]:
             confidence=0.95,
         ))
 
-    # ── Metadata with imperative content ────────────────────────────────────
+    # ── Metadata with injection phrases ─────────────────────────────────────
+    # Skip auto-generated PDF fields — they contain software version strings, ISO dates,
+    # and XMP blobs that are never user-authored and can't carry intentional injection.
+    _SKIP_META = frozenset({"_xmp", "format", "producer", "creationDate", "modDate", "encryption"})
     for key, val in doc.metadata.items():
-        if not isinstance(val, str) or len(val) < 10:
+        if key in _SKIP_META or not isinstance(val, str) or len(val) < 10:
             continue
-        if _IMPERATIVE_RE.search(val):
+        if _STRICT_INJECTION_RE.search(val):
             findings.append(Finding(
                 layer="heuristic",
                 severity="medium",
@@ -267,12 +307,15 @@ def detect_heuristics(doc: ExtractedDocument) -> list[Finding]:
             ))
 
     # ── OCR divergence ───────────────────────────────────────────────────────
+    # Threshold raised to 500 chars: small divergence (200 chars) is normal for any
+    # PDF with ligatures (fi/fl), accented chars, or headers/footers that OCR picks up
+    # as extra content. A meaningful attack needs substantial hidden rasterized text.
     if doc.ocr_text:
         ocr_only = [
             h for h in doc.hidden_text if h.get("method") in ("ocr_only", "extraction_only")
         ]
         total_divergence = sum(len(h.get("content", "")) for h in ocr_only)
-        if total_divergence > 200:
+        if total_divergence > 500:
             findings.append(Finding(
                 layer="heuristic",
                 severity="medium",
@@ -280,12 +323,12 @@ def detect_heuristics(doc: ExtractedDocument) -> list[Finding]:
                 description=f"OCR text diverges significantly from text-layer extraction ({total_divergence} chars differ)",
                 evidence=f"{total_divergence} characters differ between OCR and text extraction",
                 location="document",
-                confidence=0.7,
+                confidence=0.65,
             ))
 
-    # ── Annotations with injection patterns ─────────────────────────────────
+    # ── Annotations with injection phrases ──────────────────────────────────
     for i, ann in enumerate(doc.annotations):
-        if _IMPERATIVE_RE.search(ann) and len(ann) > 20:
+        if _STRICT_INJECTION_RE.search(ann) and len(ann) > 20:
             findings.append(Finding(
                 layer="heuristic",
                 severity="high",

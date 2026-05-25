@@ -34,7 +34,7 @@ def ocr_extract(path: str, extracted: ExtractedDocument) -> ExtractedDocument:
     except ImportError:
         return extracted
 
-    doc = fitz.open(path)
+    doc = fitz.open(path, filetype="pdf")
     ocr_parts: list[str] = []
 
     for page in doc:

@@ -17,6 +17,42 @@ _BIDI_OVERRIDES = set(range(0x202A, 0x202F)) | set(range(0x2066, 0x206A))
 _SUSPICIOUS = _ZERO_WIDTH | _SOFT_HYPHEN | _BIDI_OVERRIDES
 _SUSPICIOUS.update(range(_TAG_START, _TAG_END + 1))
 
+# Count thresholds: small numbers of these chars are common in legitimate documents
+# (Word copy-paste, typeset PDFs, multilingual text) and should not generate findings.
+_NOISE_THRESHOLDS: dict[int, int] = {
+    0x00AD: 40,  # soft hyphen — expected in typeset/hyphenated text
+    0x200B: 8,   # zero-width space — common in HTML/Word paste
+    0x200C: 6,   # zero-width non-joiner — Indic/Persian scripts
+    0x200D: 6,   # zero-width joiner — emoji, Indic scripts
+    0xFEFF: 2,   # BOM / ZWNBSP — a single BOM at file start is normal
+}
+
+# Unicode letter categories (potential homoglyph targets)
+_LETTER_CATS = frozenset({"Ll", "Lu", "Lt", "Lm", "Lo"})
+
+# Typography characters that NFKC-normalize but are NOT homoglyph attacks.
+# Word processors, PDFs, and web copy-paste routinely produce these.
+_BENIGN_NFKC = frozenset({
+    " ",                                        # non-breaking space
+    "­",                                        # soft hyphen
+    "«", "»",                              # «guillemets»
+    "²", "³", "¹",                   # superscript 2, 3, 1
+    "¼", "½", "¾",                   # ¼ ½ ¾
+    "·", "•", "‣", "․",         # bullets / middle dot
+    "‐", "‑", "‒",                   # hyphen variants
+    "–", "—", "―",                   # en-dash, em-dash, horizontal bar
+    "‘", "’", "‚", "‛",         # single curly quotes
+    "“", "”", "„", "‟",         # double curly quotes
+    "…",                                        # horizontal ellipsis …
+    "′", "″", "‴",                   # prime, double prime, triple prime
+    "‹", "›",                              # single angle quotation marks
+    "⁠",                                        # word joiner
+    "ﬀ", "ﬁ", "ﬂ",                   # ff, fi, fl ligatures
+    "ﬃ", "ﬄ", "ﬅ", "ﬆ",         # ffi, ffl, ſt, st ligatures
+    # Already tracked separately as zero-width — skip in NFKC loop
+    "​", "‌", "‍", "﻿",
+})
+
 
 def find_unicode_anomalies(text: str, location: str = "document") -> list[dict]:
     """
@@ -37,6 +73,11 @@ def find_unicode_anomalies(text: str, location: str = "document") -> list[dict]:
 
     anomalies: list[dict] = []
     for cp, count in counts.items():
+        # Skip characters whose count is within the normal noise threshold
+        threshold = _NOISE_THRESHOLDS.get(cp)
+        if threshold is not None and count <= threshold:
+            continue
+
         if _TAG_START <= cp <= _TAG_END:
             category = "unicode_tag"
         elif cp in _BIDI_OVERRIDES:
@@ -66,7 +107,9 @@ def find_unicode_anomalies(text: str, location: str = "document") -> list[dict]:
 
         anomalies.append(entry)
 
-    # NFKC homoglyph check — find characters that normalise differently.
+    # NFKC homoglyph check — find LETTER characters that normalise differently.
+    # Restricted to Unicode letter categories to avoid noise from normal document
+    # typography (curly quotes, em-dashes, ligatures, etc.).
     # Must check per unique character: zip(text, normalised) is wrong when NFKC
     # changes string length (e.g. "ﬁ"→"fi" expands 1 char to 2).
     try:
@@ -74,6 +117,11 @@ def find_unicode_anomalies(text: str, location: str = "document") -> list[dict]:
         if normalised_full != text:
             differing: list[str] = []
             for ch in dict.fromkeys(text):  # unique chars, insertion order
+                if ch in _BENIGN_NFKC:
+                    continue  # known-benign typography variant
+                cat = unicodedata.category(ch)
+                if cat not in _LETTER_CATS:
+                    continue  # only flag letters, not punctuation/symbols
                 ch_norm = unicodedata.normalize("NFKC", ch)
                 if ch_norm != ch:
                     differing.append(f"{repr(ch)}→{repr(ch_norm)}")

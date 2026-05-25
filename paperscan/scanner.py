@@ -16,12 +16,8 @@ logger = logging.getLogger(__name__)
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 _EXTRACT_TIMEOUT = 120.0  # seconds — kills hung MuPDF parses
 _ALLOWED_EXTENSIONS = {
-    ".pdf", ".docx", ".pptx",
-    ".html", ".htm",
-    ".eml",
-    ".xlsx",
-    ".csv",
-    ".json", ".xml",
+    ".pdf", ".docx",
+    ".jpg", ".jpeg", ".png",
 }
 _OCR_EXTENSIONS = {".pdf"}
 _EXECUTOR = ThreadPoolExecutor(max_workers=4)
@@ -42,27 +38,9 @@ def _extract(path: str, ext: str) -> ExtractedDocument:
     if ext == ".docx":
         from paperscan.extractors.docx import extract_docx
         return extract_docx(path)
-    if ext == ".pptx":
-        from paperscan.extractors.pptx import extract_pptx
-        return extract_pptx(path)
-    if ext in (".html", ".htm"):
-        from paperscan.extractors.html import extract_html
-        return extract_html(path)
-    if ext == ".eml":
-        from paperscan.extractors.email_ext import extract_eml
-        return extract_eml(path)
-    if ext == ".xlsx":
-        from paperscan.extractors.xlsx import extract_xlsx
-        return extract_xlsx(path)
-    if ext == ".csv":
-        from paperscan.extractors.csv_ext import extract_csv
-        return extract_csv(path)
-    if ext == ".json":
-        from paperscan.extractors.structured import extract_json
-        return extract_json(path)
-    if ext == ".xml":
-        from paperscan.extractors.structured import extract_xml
-        return extract_xml(path)
+    if ext in (".jpg", ".jpeg", ".png"):
+        from paperscan.extractors.image import extract_image
+        return extract_image(path)
     raise ValueError(f"No extractor for '{ext}'")
 
 
@@ -152,6 +130,36 @@ def scan(file_path: str) -> ScanReport:
     return asyncio.run(scan_async(file_path))
 
 
+_SEMANTIC_TIMEOUT = 300.0  # 5 minutes for full semantic analysis
+_KEEPALIVE_INTERVAL = 20.0  # seconds between SSE keepalive pings
+
+
+async def _run_with_keepalives(fut, timeout: float, interval: float = _KEEPALIVE_INTERVAL):
+    """Async generator: yields (True, None) as keepalives, then (False, result) when done.
+
+    Wraps an already-submitted asyncio.Future so long-running thread-pool work can
+    emit periodic pings to keep proxy connections alive.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    task = asyncio.ensure_future(fut)
+    try:
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                task.cancel()
+                raise asyncio.TimeoutError()
+            done, _ = await asyncio.wait({task}, timeout=min(interval, remaining))
+            if done:
+                yield False, task.result()
+                return
+            yield True, None
+    except BaseException:
+        if not task.done():
+            task.cancel()
+        raise
+
+
 async def scan_stream_async(file_path: str) -> AsyncGenerator[dict, None]:
     """Yield SSE-ready progress dicts then a final complete/error event."""
     path = Path(file_path)
@@ -173,15 +181,27 @@ async def scan_stream_async(file_path: str) -> AsyncGenerator[dict, None]:
     try:
         yield {"type": "progress", "pass": "extract", "label": "Extracting content surfaces…"}
         file_hash = await loop.run_in_executor(_EXECUTOR, _compute_hash, file_path)
+
         try:
-            extracted = await asyncio.wait_for(
+            extracted = None
+            async for is_ka, val in _run_with_keepalives(
                 loop.run_in_executor(_EXECUTOR, _extract, file_path, ext),
                 timeout=_EXTRACT_TIMEOUT,
-            )
-            extracted = await asyncio.wait_for(
+            ):
+                if is_ka:
+                    yield {"type": "keepalive"}
+                else:
+                    extracted = val
+
+            async for is_ka, val in _run_with_keepalives(
                 loop.run_in_executor(_EXECUTOR, _run_ocr, file_path, extracted, ext),
                 timeout=_EXTRACT_TIMEOUT,
-            )
+            ):
+                if is_ka:
+                    yield {"type": "keepalive"}
+                else:
+                    extracted = val
+
         except asyncio.TimeoutError:
             yield {
                 "type": "error",
@@ -199,8 +219,17 @@ async def scan_stream_async(file_path: str) -> AsyncGenerator[dict, None]:
             loop.run_in_executor(_EXECUTOR, detect_heuristics, extracted),
         )
 
-        yield {"type": "progress", "pass": "semantic", "label": "4-pass AI semantic analysis… (may take up to 60 s)"}
-        semantic_result = await loop.run_in_executor(_EXECUTOR, detect_semantic_full, extracted)
+        yield {"type": "progress", "pass": "semantic", "label": "AI semantic analysis… (may take up to 3 min)"}
+
+        semantic_result = None
+        async for is_ka, val in _run_with_keepalives(
+            loop.run_in_executor(_EXECUTOR, detect_semantic_full, extracted),
+            timeout=_SEMANTIC_TIMEOUT,
+        ):
+            if is_ka:
+                yield {"type": "keepalive"}
+            else:
+                semantic_result = val
 
         all_findings = pattern_findings + heuristic_findings + semantic_result.findings
         score, severity = aggregate(all_findings, macro_present=extracted.macro_present)

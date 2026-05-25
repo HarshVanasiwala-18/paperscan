@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
 import tempfile
+import time
+from collections import defaultdict, deque
 from pathlib import Path
 
-import io
-
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from paperscan.scanner import scan_async, scan_stream_async
 
@@ -27,27 +29,99 @@ if _env_file.exists():
 
 app = FastAPI(title="Paperscan", description="Prompt injection detector for documents")
 
+# ── Security headers ──────────────────────────────────────────────────────────
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' blob: data:; "
+    "frame-src blob:; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "upgrade-insecure-requests"
+)
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Content-Security-Policy", _CSP)
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        # HSTS — tell browsers to always use HTTPS (1 year; safe once TLS is confirmed)
+        response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+        # Prevent cross-origin info leaks (Spectre/CORS-related)
+        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+        return response
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
+# ── Rate limiting (per source IP, sliding window) ─────────────────────────────
+_RATE_WINDOW  = 60    # seconds
+_RATE_MAX     = 20    # scan requests per window per IP
+_rate_buckets: dict[str, deque] = defaultdict(deque)
+
+# How many rightmost X-Forwarded-For hops to trust as proxy additions.
+# 0 = never trust X-Forwarded-For (use direct connection IP).
+# 1 = trust one reverse proxy (Render, nginx, etc.).
+# Set via TRUSTED_PROXY_COUNT env var to prevent IP spoofing in rate limiter.
+try:
+    _TRUSTED_PROXY_COUNT = int(os.environ.get("TRUSTED_PROXY_COUNT", "0"))
+except ValueError:
+    _TRUSTED_PROXY_COUNT = 0
+
+
+def _client_ip(request: Request) -> str:
+    if _TRUSTED_PROXY_COUNT > 0:
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        ips = [ip.strip() for ip in forwarded.split(",") if ip.strip()]
+        # Take the IP that is _TRUSTED_PROXY_COUNT hops from the right.
+        # With one trusted proxy, that is the last IP added by the proxy itself.
+        if len(ips) >= _TRUSTED_PROXY_COUNT:
+            return ips[-_TRUSTED_PROXY_COUNT]
+    return request.client.host if request.client else "unknown"
+
+
+def _allow_request(ip: str) -> bool:
+    now = time.monotonic()
+    bucket = _rate_buckets[ip]
+    while bucket and bucket[0] < now - _RATE_WINDOW:
+        bucket.popleft()
+    if len(bucket) >= _RATE_MAX:
+        return False
+    bucket.append(now)
+    # Prevent unbounded memory growth under IP-spoofing floods.
+    # Evict only stale buckets first; full clear only as last resort.
+    if len(_rate_buckets) > 20_000:
+        stale = [k for k, b in _rate_buckets.items()
+                 if not b or b[-1] < now - _RATE_WINDOW]
+        for k in stale:
+            del _rate_buckets[k]
+        if len(_rate_buckets) > 20_000:
+            _rate_buckets.clear()
+    return True
+
 _STATIC_DIR = Path(__file__).parent / "static"
 _MAX_SIZE = 50 * 1024 * 1024  # 50 MB
 _ALLOWED_EXTENSIONS = {
-    ".pdf", ".docx", ".pptx",
-    ".html", ".htm",
-    ".eml",
-    ".xlsx",
-    ".csv",
-    ".json", ".xml",
+    ".pdf", ".docx",
+    ".jpg", ".jpeg", ".png",
 }
 
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 # ── Magic byte signatures (no libmagic dependency) ────────────────────────────
-# Binary formats: exact header bytes at offset 0.
-# Text formats: keyword presence in first 512 bytes (case-insensitive).
 _BINARY_MAGIC: dict[str, bytes] = {
     ".pdf":  b"%PDF",
     ".docx": b"PK\x03\x04",   # OOXML is a ZIP
-    ".pptx": b"PK\x03\x04",
-    ".xlsx": b"PK\x03\x04",
+    ".jpg":  b"\xff\xd8\xff",
+    ".jpeg": b"\xff\xd8\xff",
+    ".png":  b"\x89PNG",
 }
 
 
@@ -56,22 +130,6 @@ def _check_magic(content: bytes, ext: str) -> bool:
     sig = _BINARY_MAGIC.get(ext)
     if sig is not None:
         return content[:len(sig)] == sig
-
-    head = content[:512].lower()
-    if ext in (".html", ".htm"):
-        return any(k in head for k in (b"<html", b"<!doctype", b"<head", b"<body"))
-    if ext == ".xml":
-        stripped = head.lstrip()
-        return stripped.startswith((b"<?xml", b"<"))
-    if ext == ".json":
-        return head.lstrip()[:1] in (b"{", b"[")
-    if ext == ".eml":
-        # RFC 5322 messages start with a header field or "From " (mbox)
-        return any(head.startswith(k) for k in (
-            b"from ", b"return-path:", b"received:", b"mime-version:",
-            b"to:", b"subject:", b"date:", b"message-id:", b"content-type:",
-        )) or b"mime-version:" in head or b"content-type:" in head
-    # CSV — plain text, no reliable signature; allow through
     return True
 
 
@@ -119,7 +177,9 @@ async def index():
 
 
 @app.post("/scan/stream")
-async def scan_stream_endpoint(file: UploadFile = File(...)):
+async def scan_stream_endpoint(request: Request, file: UploadFile = File(...)):
+    if not _allow_request(_client_ip(request)):
+        raise HTTPException(429, "Rate limit exceeded — maximum 20 scans per minute.")
     ext = Path(file.filename or "").suffix.lower()
     if ext not in _ALLOWED_EXTENSIONS:
         allowed = ", ".join(sorted(_ALLOWED_EXTENSIONS))
@@ -136,7 +196,10 @@ async def scan_stream_endpoint(file: UploadFile = File(...)):
     async def event_stream():
         try:
             async for event in scan_stream_async(tmp_path):
-                # Scrub internal paths from error messages before sending to client
+                if event.get("type") == "keepalive":
+                    # SSE comment — ignored by browsers, resets proxy idle timer
+                    yield ": keepalive\n\n"
+                    continue
                 if event.get("type") == "error":
                     event = {"type": "error", "message": "Scan failed — check server logs."}
                 yield f"data: {json.dumps(event)}\n\n"
@@ -151,7 +214,9 @@ async def scan_stream_endpoint(file: UploadFile = File(...)):
 
 
 @app.post("/scan")
-async def scan_endpoint(file: UploadFile = File(...)):
+async def scan_endpoint(request: Request, file: UploadFile = File(...)):
+    if not _allow_request(_client_ip(request)):
+        raise HTTPException(429, "Rate limit exceeded — maximum 20 scans per minute.")
     ext = Path(file.filename or "").suffix.lower()
     if ext not in _ALLOWED_EXTENSIONS:
         allowed = ", ".join(sorted(_ALLOWED_EXTENSIONS))

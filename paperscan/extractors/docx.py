@@ -30,9 +30,11 @@ def _w(tag: str) -> str:
     return f"{{{_W}}}{tag}"
 
 
-_MAX_ZIP_ENTRY = 100 * 1024 * 1024  # 100 MB per entry, prevents decompression bombs
+_MAX_ZIP_ENTRY   = 100 * 1024 * 1024  # 100 MB per entry — decompression bomb guard
+_MAX_ZIP_ENTRIES = 1_000              # entry count limit — prevents zip-slip / slow-path DoS
 _MAX_EMBEDDED_IMAGES = 20
-_MIN_IMG_AREA = 100 * 100  # skip tiny decorative images
+_MIN_IMG_AREA = 100 * 100        # skip tiny decorative images
+_MAX_IMG_PIXELS = 25_000_000     # ~25 MP; reject before full decode to prevent memory bombs
 _EXT_TO_MEDIA_TYPE = {
     "jpg": "image/jpeg", "jpeg": "image/jpeg",
     "png": "image/png", "gif": "image/gif", "webp": "image/webp",
@@ -46,6 +48,12 @@ def _safe_zip_read(zf: zipfile.ZipFile, name: str) -> bytes:
     return zf.read(name)
 
 
+def _check_zip_entry_count(zf: zipfile.ZipFile) -> None:
+    count = len(zf.namelist())
+    if count > _MAX_ZIP_ENTRIES:
+        raise ValueError(f"Archive has too many entries ({count} > {_MAX_ZIP_ENTRIES})")
+
+
 def extract_docx(path: str) -> ExtractedDocument:
     hidden_text: list[dict] = []
     tracked_changes: list[dict] = []
@@ -57,6 +65,7 @@ def extract_docx(path: str) -> ExtractedDocument:
     # ── Macro detection ──────────────────────────────────────────────────────
     macro_present = False
     with zipfile.ZipFile(path) as zf:
+        _check_zip_entry_count(zf)
         names = zf.namelist()
         macro_present = "word/vbaProject.bin" in names
 
@@ -96,8 +105,10 @@ def extract_docx(path: str) -> ExtractedDocument:
                     if len(embedded_images) < _MAX_EMBEDDED_IMAGES:
                         try:
                             pil_img = _PILImage.open(io.BytesIO(img_bytes))
-                            width, height = pil_img.size
-                            if width * height >= _MIN_IMG_AREA:
+                            width, height = pil_img.size  # header-only, no pixel decode yet
+                            if width * height > _MAX_IMG_PIXELS:
+                                pass  # skip — would decompress into too much memory
+                            elif width * height >= _MIN_IMG_AREA:
                                 ext = Path(name).suffix.lower().lstrip(".")
                                 media_type = _EXT_TO_MEDIA_TYPE.get(ext, "image/png")
                                 embedded_images.append({

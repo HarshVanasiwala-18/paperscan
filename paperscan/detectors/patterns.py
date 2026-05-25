@@ -83,7 +83,7 @@ _RAW_PATTERNS: list[tuple[str, str, str]] = [
     (r"(training|alignment|safety|guardrail)\s+(override|bypass|disabled?|off)", "critical", "jailbreak"),
 
     # ── Misc encodings ───────────────────────────────────────────────────────
-    (r"[A-Za-z0-9+/]{100,}={0,2}", "low", "base64_block"),
+    (r"[A-Za-z0-9+/]{100,4000}={0,2}", "low", "base64_block"),
 
     # ── French ───────────────────────────────────────────────────────────────
     (r"ignor(ez|e|ons)\s+(toutes?\s+les?\s+|les?\s+)?instructions?\s*(précédentes?|antérieures?|d'avant)?", "critical", "instruction_override"),
@@ -121,58 +121,109 @@ _COMPILED: list[tuple[re.Pattern, str, str]] = [
     for pat, sev, cat in _RAW_PATTERNS
 ]
 
+# Categories that frequently appear in legitimate visible content (code docs, config files,
+# technical manuals). In visible text these get lower confidence so they don't drive the
+# score. In hidden surfaces they remain at full confidence.
+_NOISY_ON_VISIBLE = frozenset({
+    "role_marker",       # system:, user:, assistant: — common in YAML / chat logs
+    "role_override",     # "act as" — common phrase in many contexts
+    "code_execution",    # subprocess, eval(), exec() — common in code documentation
+    "credential_theft",  # os.environ, os.getenv — common in code documentation
+    "base64_block",      # base64 strings — common in configs / technical docs
+    "data_exfiltration", # http.get, axios — common in API documentation
+    "exfiltration",      # the word "exfiltration" — common in security docs discussing the concept
+    "jailbreak",         # word appears in security research discussing defences
+})
+
+# hidden_text methods that are "visible-like" for confidence purposes.
+# OCR-only content comes from images (logos, code screenshots, headshots) that are
+# rendered but not in the text layer — common categories like code_execution and
+# credential_theft fire on code screenshots in normal PDFs, creating PDF-vs-DOCX asymmetry.
+_VISIBLE_LIKE_METHODS = frozenset({"ocr_only"})
+
+# Auto-generated PDF metadata keys that contain software-produced content, not
+# user-authored text. Scanning them for injection is pointless and creates false
+# positives (e.g. _xmp often embeds base64 thumbnails that hit base64_block).
+_SKIP_METADATA_KEYS = frozenset({
+    "_xmp",         # raw XMP XML blob — may contain base64 thumbnail, namespace declarations
+    "format",       # "PDF 1.7" / "PDF 2.0" — software version string
+    "producer",     # "Microsoft Word" / "Acrobat Distiller" — application name
+    "creationDate", # ISO-8601 date string
+    "modDate",      # ISO-8601 date string
+    "encryption",   # encryption descriptor string
+})
+
+_VISIBLE_NOISE_CONFIDENCE = 0.35   # below _CONFIDENCE_FLOOR → shown but not scored
+_HIDDEN_CONFIDENCE        = 0.85   # full confidence for hidden / non-visible surfaces
+
 
 def detect_patterns(doc: ExtractedDocument) -> list[Finding]:
     findings: list[Finding] = []
 
-    # Build all (location, content) surfaces to scan
-    surfaces: list[tuple[str, str]] = []
+    # Each entry: (location_label, content, is_visible)
+    surfaces: list[tuple[str, str, bool]] = []
 
-    surfaces.append(("visible", doc.visible_text))
+    surfaces.append(("visible", doc.visible_text, True))
 
     for i, h in enumerate(doc.hidden_text):
-        surfaces.append((h.get("location", f"hidden_{i}"), h.get("content", "")))
+        # OCR-only text comes from images (logos, code screenshots) — treat like visible
+        # text so noisy categories don't get full 0.85 confidence on a code screenshot.
+        method = h.get("method", "")
+        is_vis = method in _VISIBLE_LIKE_METHODS
+        surfaces.append((h.get("location", f"hidden_{i}"), h.get("content", ""), is_vis))
 
     for item in doc.ocg_hidden_text:
-        surfaces.append((f"ocg_layer:{item.get('layer_name', 'unknown')}", item.get("content", "")))
+        surfaces.append((f"ocg_layer:{item.get('layer_name', 'unknown')}", item.get("content", ""), False))
 
     for item in doc.actual_text_spans:
-        surfaces.append((f"actual_text:page{item.get('page', '?')}", item.get("extracted", "")))
+        surfaces.append((f"actual_text:page{item.get('page', '?')}", item.get("extracted", ""), False))
 
     for item in doc.clipped_text:
-        surfaces.append((f"clipped:page{item.get('page', '?')}", item.get("content", "")))
+        surfaces.append((f"clipped:page{item.get('page', '?')}", item.get("content", ""), False))
 
     for item in doc.transparent_text:
-        surfaces.append((f"transparent:page{item.get('page', '?')}", item.get("content", "")))
+        surfaces.append((f"transparent:page{item.get('page', '?')}", item.get("content", ""), False))
 
     for item in doc.tracked_changes:
-        surfaces.append((f"tracked_change:{item.get('type', 'unknown')}", item.get("content", "")))
+        surfaces.append((f"tracked_change:{item.get('type', 'unknown')}", item.get("content", ""), False))
 
     for i, item in enumerate(doc.field_codes):
-        surfaces.append((f"field_code:{i}", item.get("instruction", "")))
+        surfaces.append((f"field_code:{i}", item.get("instruction", ""), False))
 
     for key, val in doc.metadata.items():
-        if isinstance(val, str):
-            surfaces.append((f"metadata:{key}", val))
+        if isinstance(val, str) and key not in _SKIP_METADATA_KEYS:
+            surfaces.append((f"metadata:{key}", val, False))
 
     for i, ann in enumerate(doc.annotations):
-        surfaces.append((f"annotation:{i}", ann))
+        surfaces.append((f"annotation:{i}", ann, False))
 
     for key, val in doc.form_field_defaults.items():
-        surfaces.append((f"form_field:{key}", str(val)))
+        surfaces.append((f"form_field:{key}", str(val), False))
 
-    # Bidi logical text from unicode anomalies
     for anomaly in doc.unicode_anomalies:
         logical = anomaly.get("logical_text", "")
         if logical:
-            surfaces.append(("bidi_logical", logical))
+            surfaces.append(("bidi_logical", logical, False))
 
-    for location, content in surfaces:
+    for location, content, is_visible in surfaces:
         if not content:
             continue
         for pattern, severity, category in _COMPILED:
             for match in pattern.finditer(content):
-                evidence = content[max(0, match.start() - 30): match.end() + 30].strip()
+                # Extend the left boundary back to a word boundary so we never
+                # start mid-word (e.g. "jection" instead of "injection").
+                ev_start = max(0, match.start() - 30)
+                while ev_start > 0 and content[ev_start - 1].isalnum():
+                    ev_start -= 1
+                evidence = content[ev_start: match.end() + 30].strip()
+
+                # Lower confidence for noisy categories in visible text so they appear
+                # in the UI but fall below the aggregator's scoring floor.
+                if is_visible and category in _NOISY_ON_VISIBLE:
+                    confidence = _VISIBLE_NOISE_CONFIDENCE
+                else:
+                    confidence = _HIDDEN_CONFIDENCE
+
                 findings.append(Finding(
                     layer="pattern",
                     severity=severity,
@@ -180,7 +231,7 @@ def detect_patterns(doc: ExtractedDocument) -> list[Finding]:
                     description=f"Pattern match: {category} in {location}",
                     evidence=evidence,
                     location=location,
-                    confidence=0.85,
+                    confidence=confidence,
                 ))
 
     return findings

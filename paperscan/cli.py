@@ -201,7 +201,7 @@ def main():
 def scan_cmd(file: str, as_json: bool, verbose: bool, deep: bool):
     """Scan FILE for prompt injection attempts.
 
-    Supported formats: PDF, DOCX, HTML, EML, XLSX, CSV, JSON, XML
+    Supported formats: PDF, DOCX, JPG, PNG
     """
     import os
     if deep:

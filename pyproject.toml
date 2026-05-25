@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "paperscan"
-version = "0.1.0"
-description = "Multi-layer prompt injection detector for PDF and DOCX documents"
+version = "0.5.0"
+description = "Multi-layer prompt injection detector for PDF, DOCX, PPTX, XLSX, images, and other document formats"
 requires-python = ">=3.11"
 dependencies = [
     "pymupdf>=1.24.11,<2.0.0",

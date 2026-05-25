@@ -210,7 +210,7 @@ header{
 .empty-inner li:hover{background:#fff;color:var(--text);box-shadow:var(--shadow-sm)}
 .empty-inner li::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--accent);flex-shrink:0}
 
-/* 4-pass showcase */
+/* 6-pass showcase */
 .passes-showcase{margin-top:1.4rem;width:100%}
 .passes-title{
   font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
@@ -218,7 +218,7 @@ header{
   display:flex;align-items:center;gap:.5rem;margin-bottom:.65rem;
 }
 .passes-title::before,.passes-title::after{content:'';flex:1;height:1px;background:var(--border)}
-.passes-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.4rem}
+.passes-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem}
 .pass-item{
   background:#fff;border:1px solid var(--border);border-radius:10px;
   padding:.65rem .4rem;text-align:center;
@@ -560,6 +560,33 @@ header{
 @keyframes results-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 .results-enter{animation:results-in .35s ease both}
 
+/* ─── Evidence marks ─────────────────────────────────────── */
+.ev-mark{border-radius:2px;padding:0 1px;cursor:pointer;transition:opacity .15s,box-shadow .2s;font-weight:500}
+.ev-mark:hover{opacity:.78}
+.ev-mark-critical{background:rgba(220,38,38,.2);color:#7f1d1d;border-bottom:1.5px solid #dc2626}
+.ev-mark-high    {background:rgba(234,88,12,.16);color:#7c2d12;border-bottom:1.5px solid #ea580c}
+.ev-mark-medium  {background:rgba(217,119,6,.14);color:#78350f;border-bottom:1.5px solid #d97706}
+.ev-mark-low     {background:rgba(100,116,139,.12);color:#334155;border-bottom:1.5px solid #94a3b8}
+.ev-mark.ev-active{outline:2px solid;outline-offset:1px;border-radius:3px}
+@keyframes ev-pulse{0%,100%{opacity:1}40%,60%{opacity:.28}}
+.ev-mark.ev-pulse{animation:ev-pulse .65s ease 2}
+
+/* ─── Preview tabs ────────────────────────────────────────── */
+.preview-tab-bar{display:none;background:#fff;border-bottom:1px solid var(--border);padding:0 1.1rem;flex-shrink:0}
+.preview-tab-bar.visible{display:flex}
+.ptab{
+  padding:.45rem .85rem;font-size:.7rem;font-weight:600;
+  font-family:ui-monospace,monospace;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--muted);background:none;border:none;border-bottom:2px solid transparent;
+  cursor:pointer;transition:color .15s,border-color .15s;margin-bottom:-1px;
+}
+.ptab:hover{color:var(--text2)}
+.ptab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* ─── Image preview ───────────────────────────────────────── */
+.preview-img-wrap{width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--bg3);overflow:auto}
+.preview-img-wrap img{max-width:100%;max-height:100%;object-fit:contain;display:block;border-radius:4px;box-shadow:var(--shadow-md)}
+
 /* ─── Print ──────────────────────────────────────────────── */
 @media print{
   body{overflow:visible;height:auto}
@@ -617,8 +644,8 @@ header{
           </svg>
         </div>
         <h3>Drop a document to scan</h3>
-        <p class="sub">PDF · DOCX · HTML · EML · XLSX · CSV · JSON · XML<br>Max 50 MB</p>
-        <input type="file" id="fileInput" accept=".pdf,.docx,.html,.htm,.eml,.xlsx,.csv,.json,.xml">
+        <p class="sub">PDF · DOCX · JPG · PNG<br>Max 50 MB</p>
+        <input type="file" id="fileInput" accept=".pdf,.docx,.jpg,.jpeg,.png">
         <label for="fileInput" class="btn-primary">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           Choose File
@@ -642,6 +669,10 @@ header{
       </label>
     </div>
 
+    <div class="preview-tab-bar" id="preview-tab-bar">
+      <button class="ptab active" id="ptab-doc"  onclick="switchPreviewTab('doc')">Document</button>
+      <button class="ptab"        id="ptab-text" onclick="switchPreviewTab('text')">Text</button>
+    </div>
     <div class="preview-content hidden" id="preview-content"></div>
   </div>
 
@@ -669,10 +700,10 @@ header{
           <li>Metadata, annotations, form fields</li>
           <li>OCR text vs extracted text divergence</li>
           <li>Unicode steganography (tag characters)</li>
-          <li>4-pass AI analysis with document context</li>
+          <li>6-pass AI analysis with document context</li>
         </ul>
         <div class="passes-showcase">
-          <div class="passes-title">4-Pass AI Analysis</div>
+          <div class="passes-title">6-Pass AI Analysis</div>
           <div class="passes-grid">
             <div class="pass-item">
               <span class="pass-num">1</span>
@@ -686,13 +717,23 @@ header{
             </div>
             <div class="pass-item">
               <span class="pass-num">3</span>
+              <span class="pass-name">FP Review</span>
+              <span class="pass-desc">Challenge weak flags</span>
+            </div>
+            <div class="pass-item">
+              <span class="pass-num">4</span>
               <span class="pass-name">Risk</span>
               <span class="pass-desc">Narrative &amp; scenario</span>
             </div>
             <div class="pass-item">
-              <span class="pass-num">4</span>
+              <span class="pass-num">5</span>
               <span class="pass-name">Sanitize</span>
               <span class="pass-desc">Safe output text</span>
+            </div>
+            <div class="pass-item">
+              <span class="pass-num">6</span>
+              <span class="pass-name">Vision</span>
+              <span class="pass-desc">Embedded images</span>
             </div>
           </div>
         </div>
@@ -704,23 +745,21 @@ header{
       <div class="scan-header">
         <div class="scan-spinner"></div>
         <div>
-          <div class="scan-title">Scanning document…</div>
-          <div class="scan-sub" id="scan-sub-text">Initializing analysis pipeline</div>
+          <div class="scan-title" id="scan-sub-text">Scanning document…</div>
         </div>
       </div>
       <div class="scan-steps">
-        <div class="scan-step" id="step-extract"><span class="scan-step-dot"></span>Extracting content surfaces</div>
-        <div class="scan-step" id="step-pattern"><span class="scan-step-dot"></span>Pattern matching (20+ signatures)</div>
-        <div class="scan-step" id="step-heuristic"><span class="scan-step-dot"></span>Structural heuristics</div>
-        <div class="scan-step" id="step-semantic"><span class="scan-step-dot"></span>4-pass AI analysis</div>
-        <div class="scan-step" id="step-aggregate"><span class="scan-step-dot"></span>Aggregating findings</div>
+        <div class="scan-step" id="step-extract"><span class="scan-step-dot"></span>Extract</div>
+        <div class="scan-step" id="step-detect"><span class="scan-step-dot"></span>Detect</div>
+        <div class="scan-step" id="step-semantic"><span class="scan-step-dot"></span>AI Analysis</div>
       </div>
     </div>
 
     <!-- Error -->
     <div id="error" class="hidden">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-      <span id="error-text"></span>
+      <span id="error-text" style="flex:1"></span>
+      <button id="retry-btn" onclick="retryLastFile()" style="margin-left:.5rem;padding:.28rem .75rem;border-radius:6px;font-size:.74rem;font-weight:600;border:1px solid var(--mal-bd);background:var(--mal-bg);color:var(--mal);cursor:pointer;white-space:nowrap;transition:all .15s" onmouseover="this.style.background='var(--mal)';this.style.color='#fff'" onmouseout="this.style.background='var(--mal-bg)';this.style.color='var(--mal)'">Retry</button>
     </div>
 
     <!-- Results -->
@@ -737,8 +776,12 @@ const errorText = document.getElementById('error-text');
 const resultsEl = document.getElementById('results');
 const emptyEl   = document.getElementById('empty-state');
 
-let _reportData = null;
-let _blobUrl    = null;
+let _reportData  = null;
+let _blobUrl     = null;
+let _docViewEl   = null;   // DOM element for the "Document" tab
+let _textViewEl  = null;   // DOM element for the "Text" (highlighted) tab
+let _hasDocTab   = false;  // whether document tab is available for current file
+let _lastFile    = null;   // last selected file — used by retry button
 
 /* ── Drag & drop ──────────────────────────────────────────── */
 dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('drag'); });
@@ -786,7 +829,12 @@ function fmt(b) {
   return (b/1048576).toFixed(1) + ' MB';
 }
 
+function retryLastFile() {
+  if (_lastFile) handleFile(_lastFile);
+}
+
 function handleFile(file) {
+  _lastFile = file;
   document.getElementById('drop-zone-wrap').classList.add('hidden');
   document.getElementById('preview-toolbar').classList.remove('hidden');
   document.getElementById('preview-filename').textContent = file.name;
@@ -795,37 +843,55 @@ function handleFile(file) {
   const contentEl = document.getElementById('preview-content');
   contentEl.classList.remove('hidden');
   contentEl.innerHTML = '';
+  _docViewEl = null; _textViewEl = null; _hasDocTab = false;
+
+  // Reset tabs
+  const tabBar = document.getElementById('preview-tab-bar');
+  tabBar.classList.remove('visible');
+  document.getElementById('ptab-doc').classList.add('active');
+  document.getElementById('ptab-text').classList.remove('active');
+
   if (_blobUrl) URL.revokeObjectURL(_blobUrl);
   _blobUrl = URL.createObjectURL(file);
 
   const ext = file.name.split('.').pop().toLowerCase();
-  if (['pdf','html','htm'].includes(ext)) {
-    const sb = ext !== 'pdf' ? ' sandbox="allow-scripts allow-same-origin"' : '';
-    contentEl.innerHTML = `<iframe src="${_blobUrl}"${sb} class="preview-iframe"></iframe>`;
-  } else if (['json','xml','csv','eml'].includes(ext)) {
-    const reader = new FileReader();
-    reader.onload = e2 => {
-      const pre = document.createElement('pre');
-      pre.className = 'preview-text';
-      pre.textContent = (e2.target.result || '').slice(0, 80000);
-      contentEl.appendChild(pre);
-    };
-    reader.readAsText(file);
+
+  if (ext === 'pdf') {
+    const iframe = document.createElement('iframe');
+    iframe.src = _blobUrl;
+    iframe.className = 'preview-iframe';
+    contentEl.appendChild(iframe);
+    _docViewEl = iframe;
+    _hasDocTab = true;
+  } else if (['jpg','jpeg','png'].includes(ext)) {
+    const wrap = document.createElement('div');
+    wrap.className = 'preview-img-wrap';
+    const img = document.createElement('img');
+    img.src = _blobUrl;
+    img.alt = file.name;
+    wrap.appendChild(img);
+    contentEl.appendChild(wrap);
+    _docViewEl = wrap;
+    _hasDocTab = true;
   } else {
-    contentEl.innerHTML = `<div class="preview-text" style="display:flex;align-items:center;justify-content:center;height:100%;font-style:italic;color:var(--muted)">Preview not available for ${ext.toUpperCase()} — text shown after scan</div>`;
+    const placeholder = document.createElement('div');
+    placeholder.className = 'preview-text';
+    placeholder.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;font-style:italic;color:var(--muted)';
+    placeholder.textContent = `${ext.toUpperCase()} — extracted text with evidence marks shown after scan`;
+    contentEl.appendChild(placeholder);
   }
   uploadFile(file);
 }
 
 /* ── Scan progress (server-driven via SSE) ───────────────── */
-const _ALL_STEPS = ['step-extract','step-pattern','step-heuristic','step-semantic','step-aggregate'];
+const _ALL_STEPS = ['step-extract','step-detect','step-semantic'];
 
 function startScanAnimation() {
   _ALL_STEPS.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove('active','done');
   });
-  document.getElementById('scan-sub-text').textContent = 'Initializing…';
+  document.getElementById('scan-sub-text').textContent = 'Scanning document…';
 }
 
 function finishScanAnimation() {
@@ -837,8 +903,8 @@ function finishScanAnimation() {
 
 function handleScanProgress(pass, label) {
   document.getElementById('scan-sub-text').textContent = label;
-  const doneFor   = { extract:[], detect:['step-extract'], semantic:['step-extract','step-pattern','step-heuristic'] };
-  const activeFor = { extract:['step-extract'], detect:['step-pattern','step-heuristic'], semantic:['step-semantic'] };
+  const doneFor   = { extract:[], detect:['step-extract'], semantic:['step-extract','step-detect'] };
+  const activeFor = { extract:['step-extract'], detect:['step-detect'], semantic:['step-semantic'] };
   (doneFor[pass]   || []).forEach(id => { const e=document.getElementById(id); if(e){e.classList.remove('active');e.classList.add('done');} });
   (activeFor[pass] || []).forEach(id => { const e=document.getElementById(id); if(e){e.classList.remove('done');e.classList.add('active');} });
 }
@@ -870,7 +936,7 @@ async function uploadFile(file) {
       buf = lines.pop();
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
-        const ev = JSON.parse(line.slice(6));
+        let ev; try { ev = JSON.parse(line.slice(6)); } catch { continue; }
         if (ev.type === 'progress') {
           handleScanProgress(ev.pass, ev.label);
         } else if (ev.type === 'complete') {
@@ -881,15 +947,7 @@ async function uploadFile(file) {
             renderReport(ev.report, file.name);
             const sev = ev.report.severity || 'clean';
             toast(`Scan complete — ${sev}`, sev==='clean'?'ok':sev==='suspicious'?'warn':'err');
-            const ext = file.name.split('.').pop().toLowerCase();
-            if (['docx','xlsx','pptx'].includes(ext) && ev.report.extracted?.visible_text) {
-              const contentEl = document.getElementById('preview-content');
-              contentEl.innerHTML = '';
-              const pre = document.createElement('pre');
-              pre.className = 'preview-text';
-              pre.textContent = ev.report.extracted.visible_text.slice(0, 80000);
-              contentEl.appendChild(pre);
-            }
+            buildTextPreview(ev.report, file.name.split('.').pop().toLowerCase());
           }, 400);
         } else if (ev.type === 'error') {
           throw new Error(ev.message);
@@ -1023,8 +1081,8 @@ function renderReport(r, filename) {
       </div>`;
   }).join('');
 
-  const PASS_LABELS = {classification:'Classify',injection_analysis:'Injection',risk_narrative:'Risk Narrative',sanitization:'Sanitize'};
-  const allPasses = ['classification','injection_analysis','risk_narrative','sanitization'];
+  const PASS_LABELS = {classification:'Classify',injection_analysis:'Injection',fp_review:'FP Review',risk_narrative:'Risk Narrative',sanitization:'Sanitize',vision_analysis:'Vision'};
+  const allPasses = ['classification','injection_analysis','fp_review','risk_narrative','sanitization','vision_analysis'];
   const done = new Set(r.semantic_passes||[]);
   const pipeSteps = r.semantic_layer_ran
     ? allPasses.map(p => {
@@ -1055,7 +1113,7 @@ function renderReport(r, filename) {
             <circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
           </svg>
         </div>
-        <div><h4>AI Risk Analysis</h4><span>4-pass · document-type-aware · cross-surface</span></div>
+        <div><h4>AI Risk Analysis</h4><span>6-pass · document-type-aware · cross-surface</span></div>
       </div>
       ${narSec}${scenSec}${remSec}
     </div>`;
@@ -1114,7 +1172,7 @@ function renderReport(r, filename) {
       </div>
     </div>
 
-    <p class="section-label">4-Pass AI Analysis</p>
+    <p class="section-label">AI Analysis Pipeline</p>
     ${pipelineBar}
     ${aiBlock}
 
@@ -1153,6 +1211,40 @@ function toggleCard(i) {
   card.classList.toggle('expanded', !isOpen);
   body.classList.toggle('open', !isOpen);
 }
+
+/* ── Extracted text preview (plain, no highlighting) ────── */
+function buildTextPreview(report, ext) {
+  const visibleText = report.extracted?.visible_text || '';
+  const contentEl = document.getElementById('preview-content');
+  const tabBar = document.getElementById('preview-tab-bar');
+
+  if (['jpg','jpeg','png'].includes(ext) && !visibleText.trim()) return;
+
+  const pre = document.createElement('pre');
+  pre.className = 'preview-text';
+  pre.id = 'ev-text-view';
+  pre.style.display = 'none';
+  pre.textContent = visibleText || '(no visible text extracted)';
+
+  _textViewEl = pre;
+  contentEl.appendChild(pre);
+
+  tabBar.classList.add('visible');
+  const docTab = document.getElementById('ptab-doc');
+  docTab.style.display = _hasDocTab ? '' : 'none';
+  docTab.textContent = ['jpg','jpeg','png'].includes(ext) ? 'Image' : 'Document';
+
+  if (!_hasDocTab) switchPreviewTab('text');
+}
+
+/* ── Switch preview tab ───────────────────────────────────── */
+function switchPreviewTab(type) {
+  document.getElementById('ptab-doc').classList.toggle('active', type === 'doc');
+  document.getElementById('ptab-text').classList.toggle('active', type === 'text');
+  if (_docViewEl)  _docViewEl.style.display  = type === 'doc'  ? '' : 'none';
+  if (_textViewEl) _textViewEl.style.display = type === 'text' ? '' : 'none';
+}
+
 
 function collapseAllFindings() {
   document.querySelectorAll('.finding-card.expanded').forEach(card => {
@@ -1219,6 +1311,8 @@ function copySanitized(e) {
     btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px"><polyline points="20 6 9 17 4 12"/></svg> Copied!`;
     toast('Sanitized text copied');
     setTimeout(() => { btn.innerHTML = orig; }, 1800);
+  }).catch(() => {
+    toast('Clipboard access denied', 'err');
   });
 }
 

@@ -91,7 +91,9 @@ def _norm_alpha(a) -> float:
 
 
 def extract_pdf(path: str) -> ExtractedDocument:
-    doc = fitz.open(path)
+    # Explicit filetype prevents format-confusion attacks where a non-PDF file
+    # with a .pdf extension tricks PyMuPDF into parsing it as a different format.
+    doc = fitz.open(path, filetype="pdf")
     try:
         if len(doc) > _MAX_PAGES:
             raise ValueError(
