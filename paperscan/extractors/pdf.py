@@ -13,7 +13,7 @@ _COLOUR_THRESHOLD = 0.08
 _OFFPAGE_MARGIN = 300
 _MAX_PAGES = 500  # cap per-page CVE surface; warn on oversized PDFs
 _MAX_EMBEDDED_IMAGES = 20   # collect at most this many images for vision analysis
-_MIN_IMG_AREA = 100 * 100   # skip tiny decorative images (< 100×100 px)
+_MIN_IMG_AREA = 50 * 50     # skip tiny decorative images; a 500×80 banner passes
 _EXT_TO_MEDIA_TYPE = {
     "jpg": "image/jpeg", "jpeg": "image/jpeg",
     "png": "image/png", "gif": "image/gif", "webp": "image/webp",
