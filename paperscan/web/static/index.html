@@ -1084,12 +1084,14 @@ function renderReport(r, filename) {
   const PASS_LABELS = {classification:'Classify',injection_analysis:'Injection',fp_review:'FP Review',risk_narrative:'Risk Narrative',sanitization:'Sanitize',vision_analysis:'Vision'};
   const allPasses = ['classification','injection_analysis','fp_review','risk_narrative','sanitization','vision_analysis'];
   const done = new Set(r.semantic_passes||[]);
+  const _COND_PASSES = new Set(['fp_review','risk_narrative','sanitization','vision_analysis']);
+  const _ICON_CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+  const _ICON_DASH  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+  const _ICON_X     = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
   const pipeSteps = r.semantic_layer_ran
     ? allPasses.map(p => {
         const ok = done.has(p);
-        const icon = ok
-          ?`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
-          :`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+        const icon = ok ? _ICON_CHECK : (_COND_PASSES.has(p) ? _ICON_DASH : _ICON_X);
         return `<span class="pipe-step ${ok?'done':'skip'}">${icon}${PASS_LABELS[p]}</span>`;
       }).join('')
     : `<span class="pipe-step warn">Set ANTHROPIC_API_KEY to enable</span>`;
@@ -1116,6 +1118,23 @@ function renderReport(r, filename) {
         <div><h4>AI Risk Analysis</h4><span>6-pass · document-type-aware · cross-surface</span></div>
       </div>
       ${narSec}${scenSec}${remSec}
+    </div>`;
+  } else if (r.semantic_layer_ran && done.has('injection_analysis')) {
+    const docTypeLabel = (r.document_type && r.document_type !== 'unknown')
+      ? r.document_type.replace(/_/g,' ') : 'document';
+    aiBlock = `<div class="ai-block">
+      <div class="ai-block-head">
+        <div class="ai-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+          </svg>
+        </div>
+        <div><h4>AI Risk Analysis</h4><span>6-pass · document-type-aware · cross-surface</span></div>
+      </div>
+      <div class="ai-section" style="background:#f0fdf4">
+        <div class="ai-section-lbl" style="color:var(--clean)">No Injections Detected</div>
+        <p style="color:#15803d">AI analysis completed across all content surfaces of this ${esc(docTypeLabel)}. No prompt injection attempts were detected.</p>
+      </div>
     </div>`;
   }
 

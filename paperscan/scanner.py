@@ -99,7 +99,8 @@ async def scan_async(file_path: str) -> ScanReport:
     )
 
     all_findings = pattern_findings + heuristic_findings + semantic_result.findings
-    score, severity = aggregate(all_findings, macro_present=extracted.macro_present)
+    ai_cleared = semantic_result.semantic_ran and not semantic_result.findings
+    score, severity = aggregate(all_findings, macro_present=extracted.macro_present, ai_cleared=ai_cleared)
 
     duration_ms = int((time.perf_counter() - start) * 1000)
 
@@ -232,7 +233,8 @@ async def scan_stream_async(file_path: str) -> AsyncGenerator[dict, None]:
                 semantic_result = val
 
         all_findings = pattern_findings + heuristic_findings + semantic_result.findings
-        score, severity = aggregate(all_findings, macro_present=extracted.macro_present)
+        ai_cleared = semantic_result.semantic_ran and not semantic_result.findings
+        score, severity = aggregate(all_findings, macro_present=extracted.macro_present, ai_cleared=ai_cleared)
         duration_ms = int((time.perf_counter() - start) * 1000)
 
         report = ScanReport(

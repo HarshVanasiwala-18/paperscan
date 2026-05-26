@@ -56,6 +56,72 @@ def _score_bar(score: int, width: int = 30) -> Text:
     return text
 
 
+_PIPE_LABELS = {
+    "classification":    "Classify",
+    "injection_analysis":"Injection",
+    "fp_review":         "FP Review",
+    "risk_narrative":    "Risk Narrative",
+    "sanitization":      "Sanitize",
+    "vision_analysis":   "Vision",
+}
+_PIPE_ALL = list(_PIPE_LABELS.keys())
+_PIPE_CONDITIONAL = {"fp_review", "risk_narrative", "sanitization", "vision_analysis"}
+
+
+def _print_ai_section(report: ScanReport) -> None:
+    """Print AI pipeline status and any AI analysis output."""
+    if not report.semantic_layer_ran:
+        return
+
+    passes = set(report.semantic_passes or [])
+    model_str = f" [dim][{report.semantic_model}][/dim]" if report.semantic_model else ""
+
+    # Pipeline pass status line
+    parts = []
+    for p in _PIPE_ALL:
+        label = _PIPE_LABELS[p]
+        if p in passes:
+            parts.append(f"[green]✓ {label}[/green]")
+        elif p in _PIPE_CONDITIONAL:
+            parts.append(f"[dim]— {label}[/dim]")
+        else:
+            parts.append(f"[red]✗ {label}[/red]")
+
+    console.print()
+    console.print(f"[bold cyan]AI Analysis Pipeline[/bold cyan]{model_str}")
+    console.print("  " + "   ".join(parts))
+
+    has_semantic = any(f.layer == "semantic" for f in report.findings)
+
+    if report.risk_narrative or report.attack_scenario:
+        if report.risk_narrative:
+            console.print(Panel(
+                report.risk_narrative,
+                title="[cyan]Risk Narrative[/cyan]",
+                border_style="cyan",
+            ))
+        if report.attack_scenario:
+            console.print(Panel(
+                report.attack_scenario,
+                title="[orange3]Attack Scenario[/orange3]",
+                border_style="orange3",
+            ))
+        if report.remediation:
+            remediation_text = "\n".join(f"  [{i+1}] {r}" for i, r in enumerate(report.remediation))
+            console.print(Panel(
+                remediation_text,
+                title="[green]Recommended Actions[/green]",
+                border_style="green",
+            ))
+    elif "injection_analysis" in passes and not has_semantic:
+        doc_label = report.document_type.replace("_", " ") if report.document_type and report.document_type != "unknown" else "document"
+        console.print(Panel(
+            f"No injection attempts detected across all content surfaces of this {doc_label}.",
+            title="[green]No Injections Detected[/green]",
+            border_style="green",
+        ))
+
+
 def _print_report(report: ScanReport, verbose: bool) -> None:
     sev_colour = _SEVERITY_COLOURS.get(report.severity, "white")
 
@@ -69,9 +135,11 @@ def _print_report(report: ScanReport, verbose: bool) -> None:
     if report.document_type and report.document_type != "unknown":
         header.append(f"\n  Document type: ")
         header.append(report.document_type.replace("_", " ").title(), style="cyan")
+    if report.document_description:
+        header.append(f"\n  {report.document_description}", style="dim")
     if report.attack_sophistication:
         soph_colour = _SOPHISTICATION_COLOURS.get(report.attack_sophistication, "white")
-        header.append("   Sophistication: ")
+        header.append("\n  Sophistication: ")
         header.append(report.attack_sophistication.upper(), style=soph_colour)
     ms = report.scan_duration_ms
     if ms >= 60_000:
@@ -85,7 +153,8 @@ def _print_report(report: ScanReport, verbose: bool) -> None:
     console.print(Panel(header, title="[bold]Paperscan Report[/bold]", border_style=sev_colour))
 
     if not report.findings:
-        console.print("[green]No findings — document appears clean.[/green]\n")
+        console.print("[green]No findings — document appears clean.[/green]")
+        _print_ai_section(report)
         return
 
     # ── Findings table ────────────────────────────────────────────────────────
@@ -110,33 +179,7 @@ def _print_report(report: ScanReport, verbose: bool) -> None:
         )
 
     console.print(table)
-
-    # ── AI Risk Analysis (shown whenever risk_narrative is present) ───────────
-    if report.risk_narrative or report.attack_scenario:
-        console.print()
-        console.print("[bold cyan]AI Risk Analysis[/bold cyan]")
-
-        if report.risk_narrative:
-            console.print(Panel(
-                report.risk_narrative,
-                title="Risk Narrative",
-                border_style="cyan",
-            ))
-
-        if report.attack_scenario:
-            console.print(Panel(
-                report.attack_scenario,
-                title="Attack Scenario",
-                border_style="orange3",
-            ))
-
-        if report.remediation:
-            remediation_text = "\n".join(f"  [{i+1}] {r}" for i, r in enumerate(report.remediation))
-            console.print(Panel(
-                remediation_text,
-                title="Recommended Actions",
-                border_style="green",
-            ))
+    _print_ai_section(report)
 
     # ── Verbose: semantic reasoning + extracted panels ────────────────────────
     if verbose:

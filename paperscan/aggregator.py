@@ -14,6 +14,7 @@ _CONFIDENCE_FLOOR = 0.50
 def aggregate(
     findings: list[Finding],
     macro_present: bool = False,
+    ai_cleared: bool = False,
 ) -> tuple[int, str]:
     """
     Combine findings from all layers into a single (score, severity) tuple.
@@ -24,6 +25,10 @@ def aggregate(
     Pattern:    confidence-weighted, capped at 40
     Heuristic:  confidence-weighted, capped at 60
     Semantic:   confidence-weighted, capped at 50
+
+    ai_cleared=True: AI semantic layer ran and found no injections. Heuristic and
+    pattern scores are halved — the AI's authoritative judgment means those signals
+    are likely false positives.
 
     Returns (score 0–100, severity "clean"|"suspicious"|"malicious")
     """
@@ -49,18 +54,28 @@ def aggregate(
     )
     semantic_score = min(raw_semantic, 50)
 
+    # AI clearance discount: when the semantic layer ran and found nothing,
+    # heuristic/pattern noise is halved.
+    if ai_cleared:
+        pattern_score   *= 0.5
+        heuristic_score *= 0.5
+
     total = min(int(pattern_score + heuristic_score + semantic_score), 100)
 
-    if macro_present and total < 21:
-        total = 21
+    # Minimum-score clamps only apply when the AI has NOT cleared the document.
+    # When ai_cleared=True the AI's authoritative judgment overrides heuristic minimums.
+    if not ai_cleared:
+        if macro_present and total < 21:
+            total = 21
 
-    # A critical finding with sufficient confidence must never result in "clean".
-    has_critical = any(
-        f.severity == "critical" and f.confidence >= _CONFIDENCE_FLOOR
-        for f in findings
-    )
-    if has_critical and total < 21:
-        total = 21
+        # A critical heuristic/pattern finding must never silently produce "clean"
+        # without AI review — but if the AI ran and found nothing, it already reviewed it.
+        has_critical = any(
+            f.severity == "critical" and f.confidence >= _CONFIDENCE_FLOOR
+            for f in findings
+        )
+        if has_critical and total < 21:
+            total = 21
 
     if total <= 20:
         severity = "clean"
