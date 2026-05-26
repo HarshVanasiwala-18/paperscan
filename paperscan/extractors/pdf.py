@@ -335,6 +335,26 @@ def _extract_pdf_inner(doc: fitz.Document) -> ExtractedDocument:
             except Exception:
                 pass
 
+    # Page-render fallback: when direct image extraction yielded nothing
+    # (scanned PDFs, JPEG2000-only pages, or images stored in unsupported formats)
+    # render pages as PNG so vision analysis still has content to inspect.
+    if not embedded_images:
+        _MAX_RENDER_PAGES = 5
+        for page in list(doc)[:_MAX_RENDER_PAGES]:
+            try:
+                pix = page.get_pixmap(dpi=150)
+                if pix.width * pix.height >= _MIN_IMG_AREA:
+                    img_bytes = pix.tobytes()  # PNG by default
+                    embedded_images.append({
+                        "location": f"page{page.number + 1}_render",
+                        "image_b64": base64.b64encode(img_bytes).decode(),
+                        "media_type": "image/png",
+                        "width": pix.width,
+                        "height": pix.height,
+                    })
+            except Exception:
+                pass
+
     visible_text = "\n".join(visible_parts).strip()
 
     # Include metadata in unicode scan so tag chars in metadata are caught

@@ -1283,9 +1283,9 @@ def detect_semantic_full(doc: ExtractedDocument) -> SemanticResult:
     # Vision pass — Analyse embedded images (photos, diagrams, screenshots)
     if doc.embedded_images:
         vision_findings = _run_vision_analysis(client, doc.embedded_images)
+        result.passes_completed.append("vision_analysis")
         if vision_findings:
             logger.debug("Vision analysis returned %d findings", len(vision_findings))
-            result.passes_completed.append("vision_analysis")
         findings = findings + vision_findings
 
     result.findings = findings
