@@ -158,6 +158,14 @@ def _print_report(report: ScanReport, verbose: bool) -> None:
         return
 
     # ── Findings table ────────────────────────────────────────────────────────
+    _PAGE = 10
+    sorted_findings = sorted(
+        report.findings,
+        key=lambda x: {"critical": 0, "high": 1, "medium": 2, "low": 3}[x.severity],
+    )
+    show = sorted_findings if verbose else sorted_findings[:_PAGE]
+    hidden = len(sorted_findings) - len(show)
+
     table = Table(box=box.ROUNDED, show_lines=True, expand=True)
     table.add_column("Layer",    style="dim", width=9)
     table.add_column("Sev",      width=8)
@@ -166,7 +174,7 @@ def _print_report(report: ScanReport, verbose: bool) -> None:
     table.add_column("Location", width=22)
     table.add_column("Evidence")
 
-    for f in sorted(report.findings, key=lambda x: {"critical": 0, "high": 1, "medium": 2, "low": 3}[x.severity]):
+    for f in show:
         sev_style = _FINDING_COLOURS.get(f.severity, "white")
         evidence = f.evidence[:70] + ("…" if len(f.evidence) > 70 else "")
         table.add_row(
@@ -179,6 +187,11 @@ def _print_report(report: ScanReport, verbose: bool) -> None:
         )
 
     console.print(table)
+    if hidden:
+        console.print(
+            f"[dim]  … and {hidden} more finding{'s' if hidden != 1 else ''}."
+            " Use [bold]-v[/bold] to see all.[/dim]"
+        )
     _print_ai_section(report)
 
     # ── Verbose: semantic reasoning + extracted panels ────────────────────────

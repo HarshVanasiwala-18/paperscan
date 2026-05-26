@@ -587,6 +587,13 @@ header{
 .preview-img-wrap{width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--bg3);overflow:auto}
 .preview-img-wrap img{max-width:100%;max-height:100%;object-fit:contain;display:block;border-radius:4px;box-shadow:var(--shadow-md)}
 
+/* ─── Pager ──────────────────────────────────────────────── */
+.pager-bar{display:flex;align-items:center;gap:.75rem;justify-content:center;padding:.75rem 0 .25rem}
+.pager-btn{padding:.3rem .85rem;border-radius:7px;font-size:.74rem;font-weight:600;border:1px solid var(--border2);background:#fff;color:var(--text2);cursor:pointer;transition:all .15s;box-shadow:var(--shadow-sm)}
+.pager-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent);background:var(--accent-l);box-shadow:none}
+.pager-btn:disabled{opacity:.35;cursor:not-allowed}
+.pager-info{font-size:.72rem;color:var(--muted);font-family:ui-monospace,monospace}
+
 /* ─── Print ──────────────────────────────────────────────── */
 @media print{
   body{overflow:visible;height:auto}
@@ -776,12 +783,18 @@ const errorText = document.getElementById('error-text');
 const resultsEl = document.getElementById('results');
 const emptyEl   = document.getElementById('empty-state');
 
-let _reportData  = null;
-let _blobUrl     = null;
-let _docViewEl   = null;   // DOM element for the "Document" tab
-let _textViewEl  = null;   // DOM element for the "Text" (highlighted) tab
-let _hasDocTab   = false;  // whether document tab is available for current file
-let _lastFile    = null;   // last selected file — used by retry button
+let _reportData       = null;
+let _blobUrl          = null;
+let _docViewEl        = null;
+let _textViewEl       = null;
+let _hasDocTab        = false;
+let _lastFile         = null;
+let _allFindings      = [];
+let _filteredFindings = [];
+let _pageStart        = 0;
+let _activeSev        = 'all';
+let _activeLay        = 'all';
+const _PAGE_SIZE      = 5;
 
 /* ── Drag & drop ──────────────────────────────────────────── */
 dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('drag'); });
@@ -1051,35 +1064,12 @@ function renderReport(r, filename) {
       </div>
     </div>` : '';
 
-  const cards = findings.map((f,i) => {
-    const vt = f.attack_vector?`<span class="vp">${esc(f.attack_vector)}</span>`:`<span style="color:var(--muted);font-size:.7rem">—</span>`;
-    const cb = f.layer==='semantic'?confBar(f.confidence)+'&thinsp;'+Math.round((f.confidence||0)*100)+'%':'';
-    const hasRs = f.layer==='semantic'&&f.reasoning;
-    return `
-      <div class="finding-card sev-${f.severity}" id="fc-${i}"
-           data-sev="${f.severity}" data-layer="${f.layer}"
-           style="animation-delay:${i*40}ms"
-           onclick="toggleCard(${i})">
-        <div class="finding-head">
-          <span class="lp">${esc(f.layer)}</span>
-          <span class="pill pill-${f.severity}">${esc(f.severity)}</span>
-          <span class="finding-category">${esc(f.category)}</span>
-          ${vt}
-          <svg class="expand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="finding-body" id="fb-${i}">
-          <div class="finding-body-inner">
-            ${f.location?`<div><div class="fb-label">Location</div><div style="font-family:ui-monospace,monospace;font-size:.72rem;color:var(--text2)">${esc(f.location)}</div></div>`:''}
-            <div>
-              <div class="fb-label">Evidence</div>
-              <div class="finding-evidence">${esc(f.evidence||'(no evidence)')}</div>
-            </div>
-            ${cb?`<div style="font-family:ui-monospace,monospace;font-size:.72rem;color:var(--text2)">Confidence ${cb}</div>`:''}
-            ${hasRs?`<div><div class="fb-label">LLM Reasoning</div><div class="finding-reasoning">${esc(f.reasoning)}</div></div>`:''}
-          </div>
-        </div>
-      </div>`;
-  }).join('');
+  // findings rendered on-demand by renderFindingsPage()
+  _allFindings = findings;
+  _filteredFindings = [...findings];
+  _pageStart = 0;
+  _activeSev = 'all';
+  _activeLay = 'all';
 
   const PASS_LABELS = {classification:'Classify',injection_analysis:'Injection',fp_review:'FP Review',risk_narrative:'Risk Narrative',sanitization:'Sanitize',vision_analysis:'Vision'};
   const allPasses = ['classification','injection_analysis','fp_review','risk_narrative','sanitization','vision_analysis'];
@@ -1198,8 +1188,9 @@ function renderReport(r, filename) {
     <p class="section-label">Findings <span style="font-size:.75rem;text-transform:none;letter-spacing:0;font-family:inherit;color:var(--muted);font-weight:400">${findings.length} total</span></p>
     ${filterBar}
     ${findings.length
-      ? `<div class="findings-list" id="findings-list">${cards}</div>
-         <div id="no-results-msg" class="no-results-msg hidden">No findings match this filter.</div>`
+      ? `<div class="findings-list" id="findings-list"></div>
+         <div id="no-results-msg" class="no-results-msg hidden">No findings match this filter.</div>
+         <div id="findings-pager"></div>`
       : `<div class="clean-banner">
           <div class="clean-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
           <p>No findings — document appears clean.</p>
@@ -1207,6 +1198,7 @@ function renderReport(r, filename) {
     }
     ${sanitizeBlock}`;
 
+  if (_allFindings.length > 0) renderFindingsPage();
   resultsEl.classList.remove('hidden');
   void resultsEl.offsetWidth;
   resultsEl.classList.add('results-enter');
@@ -1274,27 +1266,85 @@ function collapseAllFindings() {
   });
 }
 
+/* ── Finding card renderer ────────────────────────────────── */
+function renderCard(f, i) {
+  const vt = f.attack_vector ? `<span class="vp">${esc(f.attack_vector)}</span>` : `<span style="color:var(--muted);font-size:.7rem">—</span>`;
+  const cb = f.layer === 'semantic' ? confBar(f.confidence) + '&thinsp;' + Math.round((f.confidence || 0) * 100) + '%' : '';
+  const hasRs = f.layer === 'semantic' && f.reasoning;
+  return `
+    <div class="finding-card sev-${f.severity}" id="fc-${i}" data-sev="${f.severity}" data-layer="${f.layer}" onclick="toggleCard(${i})">
+      <div class="finding-head">
+        <span class="lp">${esc(f.layer)}</span>
+        <span class="pill pill-${f.severity}">${esc(f.severity)}</span>
+        <span class="finding-category">${esc(f.category)}</span>
+        ${vt}
+        <svg class="expand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="finding-body" id="fb-${i}">
+        <div class="finding-body-inner">
+          ${f.location ? `<div><div class="fb-label">Location</div><div style="font-family:ui-monospace,monospace;font-size:.72rem;color:var(--text2)">${esc(f.location)}</div></div>` : ''}
+          <div>
+            <div class="fb-label">Evidence</div>
+            <div class="finding-evidence">${esc(f.evidence || '(no evidence)')}</div>
+          </div>
+          ${cb ? `<div style="font-family:ui-monospace,monospace;font-size:.72rem;color:var(--text2)">Confidence ${cb}</div>` : ''}
+          ${hasRs ? `<div><div class="fb-label">LLM Reasoning</div><div class="finding-reasoning">${esc(f.reasoning)}</div></div>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ── Pagination ───────────────────────────────────────────── */
+function renderFindingsPage() {
+  const list  = document.getElementById('findings-list');
+  const noMsg = document.getElementById('no-results-msg');
+  const pager = document.getElementById('findings-pager');
+  if (!list) return;
+
+  if (_filteredFindings.length === 0) {
+    list.innerHTML = '';
+    if (noMsg) noMsg.classList.remove('hidden');
+    if (pager) pager.innerHTML = '';
+    return;
+  }
+  if (noMsg) noMsg.classList.add('hidden');
+
+  const page = _filteredFindings.slice(_pageStart, _pageStart + _PAGE_SIZE);
+  list.innerHTML = page.map((f, li) => renderCard(f, _pageStart + li)).join('');
+
+  if (pager) {
+    const total = _filteredFindings.length;
+    const end   = Math.min(_pageStart + _PAGE_SIZE, total);
+    if (Math.ceil(total / _PAGE_SIZE) > 1) {
+      pager.innerHTML = `<div class="pager-bar">
+        <button class="pager-btn" onclick="changePage(-1)" ${_pageStart === 0 ? 'disabled' : ''}>← Prev</button>
+        <span class="pager-info">${_pageStart + 1}–${end} of ${total}</span>
+        <button class="pager-btn" onclick="changePage(1)" ${end >= total ? 'disabled' : ''}>Next →</button>
+      </div>`;
+    } else {
+      pager.innerHTML = '';
+    }
+  }
+}
+
+function changePage(dir) {
+  const maxStart = (Math.ceil(_filteredFindings.length / _PAGE_SIZE) - 1) * _PAGE_SIZE;
+  _pageStart = Math.max(0, Math.min(_pageStart + dir * _PAGE_SIZE, maxStart));
+  renderFindingsPage();
+  document.getElementById('findings-list')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 /* ── Filter ───────────────────────────────────────────────── */
-let _activeSev = 'all', _activeLay = 'all';
 function filterFindings(btn, grp, val) {
-  if (grp==='sev') _activeSev=val; else _activeLay=val;
+  if (grp === 'sev') _activeSev = val; else _activeLay = val;
   document.querySelectorAll(`[onclick*="'${grp}'"]`).forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  let visible = 0;
-  document.querySelectorAll('#findings-list .finding-card').forEach(card => {
-    const show = (_activeSev==='all'||card.dataset.sev===_activeSev) &&
-                 (_activeLay==='all'||card.dataset.layer===_activeLay);
-    card.style.display = show ? '' : 'none';
-    if (!show) {
-      card.classList.remove('expanded');
-      const i = card.id.replace('fc-','');
-      const b = document.getElementById('fb-'+i);
-      if (b) b.classList.remove('open');
-    }
-    if (show) visible++;
-  });
-  const msg = document.getElementById('no-results-msg');
-  if (msg) msg.classList.toggle('hidden', visible > 0);
+  _filteredFindings = _allFindings.filter(f =>
+    (_activeSev === 'all' || f.severity === _activeSev) &&
+    (_activeLay === 'all' || f.layer === _activeLay)
+  );
+  _pageStart = 0;
+  renderFindingsPage();
 }
 
 /* ── Downloads ────────────────────────────────────────────── */

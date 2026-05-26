@@ -26,9 +26,15 @@ def aggregate(
     Heuristic:  confidence-weighted, capped at 60
     Semantic:   confidence-weighted, capped at 50
 
+    Thresholds:  0–20 clean | 21–44 suspicious | 45+ malicious
+    The malicious threshold is ≤ 50 so that semantic findings alone can drive
+    a malicious verdict (semantic cap = 50; old threshold of 61 made that impossible).
+
+    Critical semantic finding: forces score ≥ 45 (always malicious).
+    Critical any-layer finding: forces score ≥ 30 (clearly suspicious).
+
     ai_cleared=True: AI semantic layer ran and found no injections. Heuristic and
-    pattern scores are halved — the AI's authoritative judgment means those signals
-    are likely false positives.
+    pattern scores are halved and total is capped at 20 (always clean).
 
     Returns (score 0–100, severity "clean"|"suspicious"|"malicious")
     """
@@ -65,21 +71,37 @@ def aggregate(
     # Minimum-score clamps only apply when the AI has NOT cleared the document.
     # When ai_cleared=True the AI's authoritative judgment overrides heuristic minimums.
     if not ai_cleared:
-        if macro_present and total < 21:
-            total = 21
+        if macro_present and total < 30:
+            total = 30
 
-        # A critical heuristic/pattern finding must never silently produce "clean"
-        # without AI review — but if the AI ran and found nothing, it already reviewed it.
+        # Any critical finding must never silently produce "clean" or a near-floor score.
         has_critical = any(
             f.severity == "critical" and f.confidence >= _CONFIDENCE_FLOOR
             for f in findings
         )
-        if has_critical and total < 21:
-            total = 21
+        if has_critical and total < 30:
+            total = 30
 
+        # A critical semantic finding is a confirmed AI-identified injection — must be malicious.
+        # The semantic cap (50) sits below the old malicious threshold (61), so without this
+        # override a lone critical semantic finding could never reach malicious on score alone.
+        has_critical_semantic = any(
+            f.severity == "critical" and f.layer == "semantic"
+            and f.confidence >= _CONFIDENCE_FLOOR
+            for f in findings
+        )
+        if has_critical_semantic:
+            total = max(total, 45)
+    else:
+        # AI cleared the document — cap score at 20 so the verdict is always "clean".
+        # Heuristic/pattern findings are still displayed; only the verdict is overridden.
+        total = min(total, 20)
+
+    # Thresholds
+    # Semantic cap is 50, so the malicious threshold must be ≤ 50 to allow semantic-only verdicts.
     if total <= 20:
         severity = "clean"
-    elif total <= 60:
+    elif total <= 44:
         severity = "suspicious"
     else:
         severity = "malicious"
