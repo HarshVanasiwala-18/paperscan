@@ -10,8 +10,7 @@ from paperscan.extractors.unicode_utils import find_unicode_anomalies
 
 _BG_COLOUR = (1.0, 1.0, 1.0)
 _COLOUR_THRESHOLD = 0.08
-_OFFPAGE_MARGIN = 300
-_MAX_PAGES = 500  # cap per-page CVE surface; warn on oversized PDFs
+_MAX_PAGES = 500            # cap per-page CVE surface
 _MAX_EMBEDDED_IMAGES = 20   # collect at most this many images for vision analysis
 _MIN_IMG_AREA = 50 * 50     # skip tiny decorative images; a 500×80 banner passes
 _EXT_TO_MEDIA_TYPE = {
@@ -197,13 +196,6 @@ def _extract_pdf_inner(doc: fitz.Document) -> ExtractedDocument:
         page_num = page.number + 1
         page_rect = page.rect
 
-        extended_rect = fitz.Rect(
-            page_rect.x0 - _OFFPAGE_MARGIN,
-            page_rect.y0 - _OFFPAGE_MARGIN,
-            page_rect.x1 + _OFFPAGE_MARGIN,
-            page_rect.y1 + _OFFPAGE_MARGIN,
-        )
-
         # Form fields / widgets
         try:
             for widget in page.widgets():
@@ -226,11 +218,14 @@ def _extract_pdf_inner(doc: fitz.Document) -> ExtractedDocument:
         except Exception:
             pass
 
-        # Use "dict" format — spans have a "text" key in PyMuPDF 1.27
+        # Use a very large clip so text at any coordinate is captured regardless of
+        # how far it sits outside the MediaBox.  Off-page classification happens
+        # per-span via origin vs page_rect below.
+        _HUGE = 50_000
         try:
-            textdict = page.get_text("dict", clip=extended_rect)
+            textdict = page.get_text("dict", clip=fitz.Rect(-_HUGE, -_HUGE, _HUGE, _HUGE))
         except Exception:
-            textdict = page.get_text("dict")
+            textdict = {}
 
         visible_span_parts: list[str] = []
 

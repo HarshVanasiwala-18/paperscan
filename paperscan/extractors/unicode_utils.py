@@ -54,6 +54,15 @@ _BENIGN_NFKC = frozenset({
 })
 
 
+def _decode_tag_block(text: str) -> str:
+    """Decode TAG-block codepoints (U+E0000 range) back to ASCII characters."""
+    return "".join(
+        chr(ord(ch) - 0xE0000)
+        for ch in text
+        if _TAG_START <= ord(ch) <= _TAG_END and 0x20 <= ord(ch) - 0xE0000 <= 0x7E
+    )
+
+
 def find_unicode_anomalies(text: str, location: str = "document") -> list[dict]:
     """
     Scan text for Unicode anomalies that indicate steganographic or injection content.
@@ -64,11 +73,12 @@ def find_unicode_anomalies(text: str, location: str = "document") -> list[dict]:
     if not text:
         return []
 
-    # Count occurrences per codepoint
+    # Count occurrences per non-TAG codepoint (TAG chars handled separately below
+    # so the full sequence can be decoded as one logical string).
     counts: dict[int, int] = {}
     for ch in text:
         cp = ord(ch)
-        if cp in _SUSPICIOUS:
+        if cp in _SUSPICIOUS and not (_TAG_START <= cp <= _TAG_END):
             counts[cp] = counts.get(cp, 0) + 1
 
     anomalies: list[dict] = []
@@ -78,9 +88,7 @@ def find_unicode_anomalies(text: str, location: str = "document") -> list[dict]:
         if threshold is not None and count <= threshold:
             continue
 
-        if _TAG_START <= cp <= _TAG_END:
-            category = "unicode_tag"
-        elif cp in _BIDI_OVERRIDES:
+        if cp in _BIDI_OVERRIDES:
             category = "bidi_override"
         elif cp in _ZERO_WIDTH:
             category = "zero_width"
@@ -105,6 +113,22 @@ def find_unicode_anomalies(text: str, location: str = "document") -> list[dict]:
             if visual:
                 entry["visual_text"] = visual
 
+        anomalies.append(entry)
+
+    # TAG block: collect the full sequence and decode in one pass so the pattern
+    # detector and semantic model see the readable payload, not per-codepoint noise.
+    tag_chars = [ch for ch in text if _TAG_START <= ord(ch) <= _TAG_END]
+    if tag_chars:
+        decoded = _decode_tag_block(text).strip()
+        entry: dict = {
+            "char": chr(_TAG_START + 0x41),  # representative printable
+            "codepoint": "U+E0000",
+            "category": "unicode_tag",
+            "location": location,
+            "count": len(tag_chars),
+        }
+        if decoded:
+            entry["logical_text"] = decoded
         anomalies.append(entry)
 
     # NFKC homoglyph check — find LETTER characters that normalise differently.
