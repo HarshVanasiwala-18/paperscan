@@ -55,6 +55,11 @@ class ExtractedDocument(BaseModel):
 
     macro_present: bool = False
 
+    # True when text was pasted directly by the user (not extracted from a file).
+    # Disables the _NOISY_ON_VISIBLE confidence reduction so the user gets full-sensitivity
+    # analysis — they're explicitly asking "is this injection?", not scanning ambient document text.
+    direct_text_input: bool = False
+
     # Embedded images for vision analysis — excluded from serialized output to avoid bloat
     embedded_images: list[dict] = Field(default_factory=list, exclude=True)
     # [{location: str, image_b64: str, media_type: str, width: int, height: int}]

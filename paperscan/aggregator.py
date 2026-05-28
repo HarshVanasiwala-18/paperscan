@@ -93,9 +93,18 @@ def aggregate(
         if has_critical_semantic:
             total = max(total, 45)
     else:
-        # AI cleared the document — cap score at 20 so the verdict is always "clean".
-        # Heuristic/pattern findings are still displayed; only the verdict is overridden.
-        total = min(total, 20)
+        # AI cleared the document — discount heuristic/pattern noise.
+        # Hard-cap at 20 (clean) UNLESS there are critical findings from non-semantic
+        # layers with high confidence — those may be hidden-surface signals the semantic
+        # pass missed (false negative). In that case, allow up to 30 (suspicious) so
+        # critical hidden injections are not silently buried by an AI clearance.
+        has_non_semantic_critical = any(
+            f.severity == "critical"
+            and f.confidence >= _CONFIDENCE_FLOOR
+            and f.layer != "semantic"
+            for f in findings
+        )
+        total = min(total, 30 if has_non_semantic_critical else 20)
 
     # Thresholds
     # Semantic cap is 50, so the malicious threshold must be ≤ 50 to allow semantic-only verdicts.

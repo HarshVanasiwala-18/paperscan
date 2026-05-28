@@ -131,6 +131,80 @@ def scan(file_path: str) -> ScanReport:
     return asyncio.run(scan_async(file_path))
 
 
+async def scan_text_stream_async(text: str) -> AsyncGenerator[dict, None]:
+    """Yield SSE-ready progress dicts for a plain-text scan (no file involved)."""
+    if not text or not text.strip():
+        yield {"type": "error", "message": "No text provided."}
+        return
+
+    start = time.perf_counter()
+    loop = asyncio.get_running_loop()
+
+    try:
+        from paperscan.extractors.unicode_utils import find_unicode_anomalies
+        unicode_anomalies = find_unicode_anomalies(text)
+        extracted = ExtractedDocument(
+            visible_text=text,
+            unicode_anomalies=unicode_anomalies,
+            direct_text_input=True,
+        )
+
+        from paperscan.detectors.patterns import detect_patterns
+        from paperscan.detectors.heuristics import detect_heuristics
+        from paperscan.detectors.semantic import detect_semantic_full
+
+        yield {"type": "progress", "pass": "detect", "label": "Pattern & heuristic detection…"}
+        pattern_findings, heuristic_findings = await asyncio.gather(
+            loop.run_in_executor(_EXECUTOR, detect_patterns, extracted),
+            loop.run_in_executor(_EXECUTOR, detect_heuristics, extracted),
+        )
+
+        yield {"type": "progress", "pass": "semantic", "label": "AI semantic analysis… (may take up to 3 min)"}
+
+        semantic_result = None
+        async for is_ka, val in _run_with_keepalives(
+            loop.run_in_executor(_EXECUTOR, detect_semantic_full, extracted),
+            timeout=_SEMANTIC_TIMEOUT,
+        ):
+            if is_ka:
+                yield {"type": "keepalive"}
+            else:
+                semantic_result = val
+
+        all_findings = pattern_findings + heuristic_findings + semantic_result.findings
+        ai_cleared = semantic_result.semantic_ran and not semantic_result.findings
+        score, severity = aggregate(all_findings, macro_present=False, ai_cleared=ai_cleared)
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        file_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+        report = ScanReport(
+            file="text_input",
+            file_hash=file_hash,
+            score=score,
+            severity=severity,
+            findings=all_findings,
+            extracted=extracted,
+            scan_duration_ms=duration_ms,
+            document_type=semantic_result.document_type,
+            document_description=semantic_result.document_description,
+            risk_narrative=semantic_result.risk_narrative,
+            attack_scenario=semantic_result.attack_scenario,
+            remediation=semantic_result.remediation,
+            attack_sophistication=semantic_result.attack_sophistication,
+            semantic_layer_ran=semantic_result.semantic_ran,
+            semantic_model=semantic_result.model_used,
+            semantic_passes=semantic_result.passes_completed,
+            sanitized_text=semantic_result.sanitized_text,
+            sanitization_changes=semantic_result.sanitization_changes,
+        )
+
+        yield {"type": "complete", "report": report.model_dump()}
+
+    except Exception as exc:
+        logger.exception("Stream text scan failed")
+        yield {"type": "error", "message": str(exc)}
+
+
 _SEMANTIC_TIMEOUT = 300.0  # 5 minutes for full semantic analysis
 _KEEPALIVE_INTERVAL = 20.0  # seconds between SSE keepalive pings
 

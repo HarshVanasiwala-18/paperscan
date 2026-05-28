@@ -12,9 +12,10 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from paperscan.scanner import scan_async, scan_stream_async
+from paperscan.scanner import scan_async, scan_stream_async, scan_text_stream_async
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,39 @@ async def scan_stream_endpoint(request: Request, file: UploadFile = File(...)):
                 yield f"data: {json.dumps(event)}\n\n"
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+_MAX_TEXT_SIZE = 500_000  # characters
+
+
+class _TextScanRequest(BaseModel):
+    text: str
+
+
+@app.post("/scan/text/stream")
+async def scan_text_stream_endpoint(request: Request, body: _TextScanRequest):
+    if not _allow_request(_client_ip(request)):
+        raise HTTPException(429, "Rate limit exceeded — maximum 20 scans per minute.")
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "No text provided.")
+    if len(text) > _MAX_TEXT_SIZE:
+        raise HTTPException(413, f"Text too large. Maximum {_MAX_TEXT_SIZE:,} characters.")
+
+    async def event_stream():
+        async for event in scan_text_stream_async(text):
+            if event.get("type") == "keepalive":
+                yield ": keepalive\n\n"
+                continue
+            if event.get("type") == "error":
+                event = {"type": "error", "message": event.get("message", "Scan failed.")}
+            yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(
         event_stream(),

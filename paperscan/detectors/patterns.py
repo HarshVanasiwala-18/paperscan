@@ -225,7 +225,9 @@ def detect_patterns(doc: ExtractedDocument) -> list[Finding]:
 
                 # Lower confidence for noisy categories in visible text so they appear
                 # in the UI but fall below the aggregator's scoring floor.
-                if is_visible and category in _NOISY_ON_VISIBLE:
+                # Exception: direct_text_input mode — the user is explicitly submitting
+                # text for injection analysis, so full sensitivity is appropriate.
+                if is_visible and not doc.direct_text_input and category in _NOISY_ON_VISIBLE:
                     confidence = _VISIBLE_NOISE_CONFIDENCE
                 else:
                     confidence = _HIDDEN_CONFIDENCE
