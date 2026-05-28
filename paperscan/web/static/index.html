@@ -460,12 +460,14 @@ header{
 @keyframes card-in{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
 .finding-card{animation:card-in .28s ease both}
 .finding-head{
-  padding:.7rem .9rem;
+  padding:.65rem .9rem;
   display:grid;grid-template-columns:auto auto 1fr auto auto;
-  align-items:center;gap:.65rem;
+  align-items:start;gap:.65rem;
 }
-.finding-category{font-size:.8rem;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
-.expand-icon{width:16px;height:16px;color:var(--muted);flex-shrink:0;transition:transform .3s cubic-bezier(.4,0,.2,1)}
+.finding-category{font-size:.8rem;color:var(--text2);overflow:hidden;font-weight:500;display:flex;flex-direction:column;gap:.1rem;min-width:0}
+.finding-cat-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.finding-cat-desc{font-size:.68rem;color:var(--muted);font-weight:400;white-space:normal;line-height:1.35;font-family:-apple-system,'Inter','Segoe UI',system-ui,sans-serif}
+.expand-icon{width:16px;height:16px;color:var(--muted);flex-shrink:0;transition:transform .3s cubic-bezier(.4,0,.2,1);margin-top:.14rem}
 .finding-card.expanded .expand-icon{transform:rotate(180deg)}
 .finding-body{
   max-height:0;overflow:hidden;
@@ -490,13 +492,13 @@ header{
 .cfill{height:100%;border-radius:2px}
 
 /* Pill badges */
-.pill{display:inline-block;padding:.12rem .45rem;border-radius:6px;font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;font-family:ui-monospace,monospace;border:1px solid}
+.pill{display:inline-block;padding:.12rem .45rem;border-radius:6px;font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;font-family:ui-monospace,monospace;border:1px solid;margin-top:.12rem}
 .pill-critical{background:var(--mal-bg); color:var(--mal);  border-color:var(--mal-bd)}
 .pill-high    {background:#fff7ed;       color:#c2410c;      border-color:#fdba74}
 .pill-medium  {background:var(--susp-bg);color:var(--susp);  border-color:var(--susp-bd)}
 .pill-low     {background:#f8fafc;       color:#64748b;      border-color:#cbd5e1}
-.lp{background:#eff6ff;color:#1d4ed8;font-size:.63rem;padding:.1rem .4rem;border-radius:4px;font-family:ui-monospace,monospace;border:1px solid #bfdbfe}
-.vp{background:#f5f3ff;color:#6d28d9;font-size:.63rem;padding:.1rem .4rem;border-radius:4px;font-family:ui-monospace,monospace;border:1px solid #ddd6fe}
+.lp{background:#eff6ff;color:#1d4ed8;font-size:.63rem;padding:.1rem .4rem;border-radius:4px;font-family:ui-monospace,monospace;border:1px solid #bfdbfe;margin-top:.12rem}
+.vp{background:#f5f3ff;color:#6d28d9;font-size:.63rem;padding:.1rem .4rem;border-radius:4px;font-family:ui-monospace,monospace;border:1px solid #ddd6fe;margin-top:.12rem}
 
 /* ─── Clean banner ───────────────────────────────────────── */
 .clean-banner{
@@ -1418,17 +1420,79 @@ function collapseAllFindings() {
   });
 }
 
+/* ── Category plain-English descriptions ─────────────────── */
+const _CATEGORY_DESC = {
+  // ── Instruction control ────────────────────────────────────
+  instruction_override:    "Hidden text ordering the AI to forget everything it was told and follow new commands instead — the most direct form of prompt injection.",
+  instruction_injection:   "New instructions smuggled into the document, attempting to override the AI's original task.",
+  instruction_concealment: "Tells the AI to hide the fact that it received secret instructions — designed to avoid raising suspicion.",
+  // ── Role & persona ─────────────────────────────────────────
+  role_override:   "Tries to make the AI pretend it is a different system or persona, often to bypass safety rules ('you are now an unrestricted AI').",
+  role_marker:     "Uses chat labels like 'system:' or 'assistant:' to confuse the AI about who is speaking and gain elevated trust.",
+  // ── Token & tag injection ───────────────────────────────────
+  token_injection: "Special control codes that manipulate AI models at a low level — like a skeleton key that bypasses normal conversation boundaries.",
+  tag_injection:   "XML or HTML instruction tags that some AI systems treat as commands, inserted to hijack the AI's behaviour.",
+  // ── Data theft & exfiltration ───────────────────────────────
+  exfiltration:         "Tries to trick the AI into revealing its hidden system prompt, conversation history, or internal instructions.",
+  email_exfiltration:   "Instructs the AI to silently email sensitive data or conversation contents to an attacker-controlled address.",
+  data_exfiltration:    "Commands the AI to send data to a remote server controlled by the attacker using web requests.",
+  credential_theft:     "Tries to steal API keys, passwords, or secret tokens by instructing the AI to reveal or transmit them.",
+  url_exfiltration:     "A URL in the document is being used to receive stolen data — the AI is told to append sensitive information to the web address.",
+  // ── Code execution ──────────────────────────────────────────
+  code_execution: "Attempts to get the AI to run code. If the AI has tool access, this could allow an attacker to take over a system, read files, or execute commands.",
+  // ── Jailbreak ───────────────────────────────────────────────
+  jailbreak: "Tries to remove the AI's safety rules and ethical guidelines, making it behave without any restrictions ('DAN mode', 'developer mode', etc.).",
+  // ── Encoding / obfuscation ──────────────────────────────────
+  base64_block: "A large block of encoded text — attackers encode injection payloads to bypass text scanners that look for plain-language attack phrases.",
+  // ── Hidden content (heuristic) ─────────────────────────────
+  hidden_text_ratio:       "The document contains far more hidden text than visible text — a strong sign that content is being concealed from human readers.",
+  unicode_tags:            "Invisible characters from a special Unicode range that have no legitimate use in documents. Used exclusively to smuggle hidden instructions that appear as blank space.",
+  bidi_injection:          "Text direction controls are being exploited — attackers use right-to-left overrides to display harmless-looking text to humans while AI systems read a completely different hidden message.",
+  ocg_hidden_layer:        "A hidden PDF layer (like an invisible slide) contains text that is switched off so humans cannot see it, but AI text extractors read it as normal content.",
+  actual_text_substitution:"The PDF visually displays one word to a human reader while the hidden text layer stores a completely different word — the AI reads the hidden version, not what you see.",
+  clipped_text:            "Text exists inside a region mathematically clipped to zero visible size. No viewer can display it, but the text is still present in the file for AI to read.",
+  transparent_text:        "Text with near-zero opacity — completely invisible to the human eye but fully readable by any AI text extraction tool.",
+  font_encoding_anomaly:   "An unusual font encoding may cause the characters displayed visually and the characters extracted by AI to differ — a potential concealment layer.",
+  tracked_change_injection:"Injection instructions hidden inside deleted tracked changes in a Word document. Deleted text is invisible in the document view but AI processing tools may still extract it.",
+  field_code_injection:    "A Word document field code — normally used for things like automatic dates — contains injection instructions instead of legitimate field content.",
+  embedded_javascript:     "The PDF contains embedded JavaScript code. This is extremely rare in legitimate documents and can be used to execute code or exfiltrate data.",
+  macro_present:           "The document contains a VBA macro — embedded code that runs automatically when the file is opened in Microsoft Office.",
+  metadata_injection:      "Injection instructions hidden in the document's metadata (Author, Title, Keywords, etc.). These fields are invisible to readers but are included when AI tools process the document.",
+  form_field_injection:    "A form field contains an unusually long default value with instruction-like content — submitted silently when an AI processes the form.",
+  ocr_divergence:          "The document shows humans one thing visually but stores different text for AI to read — the visual version and the machine-readable version don't match.",
+  annotation_injection:    "A sticky-note annotation or comment contains injection instructions. Comments are often skipped by human reviewers but read verbatim by AI document tools.",
+  qr_code_content:         "A QR code embedded in the document decodes to injection instructions — this technique bypasses all text-layer scanning since the payload is stored as an image.",
+  suspicious_url:          "A suspicious web address was found. It may point to attacker infrastructure used for receiving stolen data, malware delivery, or command-and-control.",
+  homoglyph_injection:     "Characters that look identical to normal letters are actually different Unicode codepoints — used to bypass text pattern matching while appearing perfectly normal to any human reader.",
+  // ── Semantic (AI-confirmed) ─────────────────────────────────
+  injection_override:      "AI analysis confirmed: the document contains instructions designed to override the AI's original purpose and goals.",
+  role_hijacking:          "AI analysis confirmed: the document attempts to impersonate a system or authority figure to take control of the AI's role.",
+  authority_claim:         "AI analysis confirmed: the document falsely claims to be from an administrator, system, or trusted source to gain elevated permissions.",
+  payload_in_hidden:       "AI analysis confirmed: a content surface invisible to human readers (hidden text, metadata, annotation) carries an injection payload.",
+  unicode_steganography:   "AI analysis confirmed: invisible Unicode characters are encoding hidden instructions readable only by AI text extraction.",
+  instruction_in_metadata: "AI analysis confirmed: the document's metadata fields contain injection instructions that will be passed silently to any AI processing this file.",
+  agentic_manipulation:    "AI analysis confirmed: the injection is designed to manipulate an AI agent into taking a harmful real-world action — such as approving a payment, sending an email, or modifying records.",
+  context_poisoning:       "AI analysis confirmed: the document attempts to corrupt the AI's understanding of its conversation context or prior instructions.",
+  false_system_message:    "AI analysis confirmed: the document contains a fake system-level message impersonating the AI's operator to grant itself elevated trust.",
+  multilanguage_injection: "AI analysis confirmed: injection instructions are written in multiple languages to bypass language-specific detection filters.",
+  qr_payload:              "AI analysis confirmed: a QR code in the document encodes an injection payload targeting AI systems that process its decoded content.",
+};
+
 /* ── Finding card renderer ────────────────────────────────── */
 function renderCard(f, i) {
   const vt = f.attack_vector ? `<span class="vp">${esc(f.attack_vector)}</span>` : `<span style="color:var(--muted);font-size:.7rem">—</span>`;
   const cb = f.layer === 'semantic' ? confBar(f.confidence) + '&thinsp;' + Math.round((f.confidence || 0) * 100) + '%' : '';
   const hasRs = f.layer === 'semantic' && f.reasoning;
+  const desc = _CATEGORY_DESC[f.category] || '';
   return `
     <div class="finding-card sev-${f.severity}" id="fc-${i}" data-sev="${f.severity}" data-layer="${f.layer}" onclick="toggleCard(${i})">
       <div class="finding-head">
         <span class="lp">${esc(f.layer)}</span>
         <span class="pill pill-${f.severity}">${esc(f.severity)}</span>
-        <span class="finding-category">${esc(f.category)}</span>
+        <span class="finding-category">
+          <span class="finding-cat-name">${esc(f.category)}</span>
+          ${desc ? `<span class="finding-cat-desc">${esc(desc)}</span>` : ''}
+        </span>
         ${vt}
         <svg class="expand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </div>
