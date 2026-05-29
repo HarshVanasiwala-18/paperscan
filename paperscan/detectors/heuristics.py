@@ -191,17 +191,30 @@ def detect_heuristics(doc: ExtractedDocument) -> list[Finding]:
         ))
 
     # ── Transparent text ────────────────────────────────────────────────────
+    # Skip spans shorter than 5 chars — these are watermark fragments, copyright
+    # symbols, journal abbreviations, and page numbers (e.g. "©", "J.", "1983")
+    # produced by OCR software, not injection payloads.
+    # Also cap at 20 findings per document to prevent score inflation on scanned
+    # PDFs where every watermark span creates a separate "high" finding.
     if doc.transparent_text:
+        _MAX_TRANSPARENT_FINDINGS = 20
+        _transparent_count = 0
         for item in doc.transparent_text:
+            if _transparent_count >= _MAX_TRANSPARENT_FINDINGS:
+                break
+            content = item.get("content", "").strip()
+            if len(content) < 5:
+                continue
             findings.append(Finding(
                 layer="heuristic",
                 severity="high",
                 category="transparent_text",
                 description=f"Near-invisible text (alpha={item.get('alpha', 0):.3f})",
-                evidence=item.get("content", "")[:200],
+                evidence=content[:200],
                 location=f"transparent:page{item.get('page', '?')}",
                 confidence=0.85,
             ))
+            _transparent_count += 1
 
     # ── Font encoding anomalies ──────────────────────────────────────────────
     # Confidence dropped below scoring floor: custom font encodings are present in

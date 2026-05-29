@@ -10,6 +10,22 @@ _SEMANTIC_WEIGHTS  = {"low": 10, "medium": 20, "high": 35, "critical": 50}
 # Prevents weak / ambiguous signals from driving the verdict.
 _CONFIDENCE_FLOOR = 0.50
 
+# Categories that represent *direct* injection evidence (as opposed to proxy/structural
+# metrics like hidden_text_ratio which can fire on legitimate watermarks or OCR artifacts).
+# Only these are allowed to override the ai_cleared cap — semantic finding nothing while
+# a direct injection category fires at critical suggests a semantic false negative.
+_DIRECT_INJECTION_CATEGORIES = frozenset({
+    # Pattern layer
+    "instruction_override", "instruction_injection", "instruction_concealment",
+    "role_override", "role_marker", "token_injection", "tag_injection",
+    "exfiltration", "email_exfiltration", "data_exfiltration", "credential_theft",
+    "code_execution", "jailbreak", "availability_attack",
+    # Heuristic layer — content-based, not structural metrics
+    "unicode_tags", "bidi_injection", "ocg_hidden_layer", "actual_text_substitution",
+    "clipped_text", "tracked_change_injection", "field_code_injection",
+    "embedded_javascript", "metadata_injection", "annotation_injection", "qr_code_content",
+})
+
 
 def aggregate(
     findings: list[Finding],
@@ -94,17 +110,25 @@ def aggregate(
             total = max(total, 45)
     else:
         # AI cleared the document — discount heuristic/pattern noise.
-        # Hard-cap at 20 (clean) UNLESS there are critical findings from non-semantic
-        # layers with high confidence — those may be hidden-surface signals the semantic
-        # pass missed (false negative). In that case, allow up to 30 (suspicious) so
-        # critical hidden injections are not silently buried by an AI clearance.
+        # Default: hard-cap at 20 (clean verdict).
+        # Exception: if a *direct* injection category (not proxy metrics like
+        # hidden_text_ratio) fires at critical from a non-semantic layer, the
+        # semantic pass may have a false negative on a hidden surface. In that case
+        # floor the score at 21 (suspicious) so the injection is not silently buried,
+        # but cap at 30 so an ai_cleared document can never reach malicious on
+        # heuristics alone.
         has_non_semantic_critical = any(
             f.severity == "critical"
             and f.confidence >= _CONFIDENCE_FLOOR
             and f.layer != "semantic"
+            and f.category in _DIRECT_INJECTION_CATEGORIES
             for f in findings
         )
-        total = min(total, 30 if has_non_semantic_critical else 20)
+        if has_non_semantic_critical:
+            total = max(total, 21)   # floor: at least suspicious
+            total = min(total, 30)   # ceiling: never malicious from ai_cleared alone
+        else:
+            total = min(total, 20)   # clean cap
 
     # Thresholds
     # Semantic cap is 50, so the malicious threshold must be ≤ 50 to allow semantic-only verdicts.
