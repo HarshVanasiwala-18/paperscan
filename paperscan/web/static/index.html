@@ -596,48 +596,6 @@ header{
 .pager-btn:disabled{opacity:.35;cursor:not-allowed}
 .pager-info{font-size:.72rem;color:var(--muted);font-family:ui-monospace,monospace}
 
-/* ─── Input mode tab bar ─────────────────────────────────── */
-#upload-panel{flex:1;display:flex;flex-direction:column;overflow:hidden}
-.input-mode-bar{
-  display:flex;border-bottom:1px solid var(--border);background:#fff;flex-shrink:0;
-  padding:0 1.1rem;
-}
-.imode{
-  padding:.55rem .9rem;font-size:.74rem;font-weight:600;
-  color:var(--muted);background:none;border:none;border-bottom:2px solid transparent;
-  cursor:pointer;transition:color .15s,border-color .15s;margin-bottom:-1px;
-  display:flex;align-items:center;gap:.35rem;
-}
-.imode:hover{color:var(--text2)}
-.imode.active{color:var(--accent);border-bottom-color:var(--accent)}
-.imode svg{width:13px;height:13px}
-
-/* ─── Text input panel ───────────────────────────────────── */
-.text-input-panel{
-  flex:1;display:flex;flex-direction:column;padding:1.1rem;gap:.75rem;
-  background:var(--bg3);overflow:hidden;
-}
-.text-input-wrap{
-  flex:1;display:flex;flex-direction:column;min-height:0;
-  background:#fff;border:1.5px solid var(--border2);border-radius:var(--r);
-  overflow:hidden;box-shadow:var(--shadow);transition:border-color .2s,box-shadow .2s;
-}
-.text-input-wrap:focus-within{
-  border-color:var(--accent);
-  box-shadow:0 0 0 3px rgba(242,95,69,.1),var(--shadow);
-}
-#text-input{
-  flex:1;width:100%;border:none;outline:none;resize:none;min-height:0;
-  font-family:ui-monospace,monospace;font-size:.76rem;line-height:1.65;
-  color:var(--text2);padding:1rem 1.1rem;background:transparent;
-}
-.text-input-footer{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:.55rem 1rem;border-top:1px solid var(--border);background:var(--bg3);
-  flex-shrink:0;
-}
-.char-count{font-size:.68rem;color:var(--muted);font-family:ui-monospace,monospace}
-
 /* ─── Print ──────────────────────────────────────────────── */
 @media print{
   body{overflow:visible;height:auto}
@@ -686,18 +644,6 @@ header{
 
   <!-- LEFT: Preview pane -->
   <div class="preview-pane" id="preview-pane">
-    <div class="input-mode-bar">
-      <button class="imode active" id="imode-upload" onclick="switchInputMode('upload')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        Document
-      </button>
-      <button class="imode" id="imode-text" onclick="switchInputMode('text')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>
-        Paste Text
-      </button>
-    </div>
-
-    <div id="upload-panel">
     <div class="drop-zone-wrap" id="drop-zone-wrap">
       <div class="upload-zone" id="dropzone">
         <div class="upload-icon-box">
@@ -737,20 +683,6 @@ header{
       <button class="ptab"        id="ptab-text" onclick="switchPreviewTab('text')">Text</button>
     </div>
     <div class="preview-content hidden" id="preview-content"></div>
-    </div><!-- /#upload-panel -->
-
-    <div class="text-input-panel hidden" id="text-input-panel">
-      <div class="text-input-wrap">
-        <textarea id="text-input" placeholder="Paste or type text to scan for prompt injection attempts…"></textarea>
-      </div>
-      <div class="text-input-footer">
-        <span class="char-count" id="char-count">0 chars</span>
-        <button class="btn-primary" id="scan-text-btn" onclick="handleTextScan()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          Scan Text
-        </button>
-      </div>
-    </div>
   </div>
 
   <!-- RIGHT: Results pane -->
@@ -769,8 +701,8 @@ header{
             </svg>
           </div>
         </div>
-        <h3>Drop a file or paste text to begin</h3>
-        <p>Paperscan analyzes all content surfaces for prompt injection attempts.</p>
+        <h3>Drop a file to begin</h3>
+        <p>Paperscan analyzes all hidden content surfaces for prompt injection attempts.</p>
         <ul>
           <li>Hidden &amp; invisible text (color, font-size, opacity)</li>
           <li>PDF layers, /ActualText, clipped regions</li>
@@ -859,8 +791,6 @@ let _docViewEl        = null;
 let _textViewEl       = null;
 let _hasDocTab        = false;
 let _lastFile         = null;
-let _lastText         = null;
-let _inputMode        = 'upload';
 let _allFindings      = [];
 let _filteredFindings = [];
 let _pageStart        = 0;
@@ -915,89 +845,7 @@ function fmt(b) {
 }
 
 function retryLastFile() {
-  if (_inputMode === 'text' && _lastText) { scanText(_lastText); }
-  else if (_lastFile) { handleFile(_lastFile); }
-}
-
-/* ── Input mode ───────────────────────────────────────── */
-function switchInputMode(mode) {
-  _inputMode = mode;
-  document.getElementById('imode-upload').classList.toggle('active', mode === 'upload');
-  document.getElementById('imode-text').classList.toggle('active', mode === 'text');
-  document.getElementById('upload-panel').classList.toggle('hidden', mode !== 'upload');
-  document.getElementById('text-input-panel').classList.toggle('hidden', mode !== 'text');
-}
-
-document.getElementById('text-input').addEventListener('input', function() {
-  const n = this.value.length;
-  document.getElementById('char-count').textContent = n.toLocaleString() + ' char' + (n !== 1 ? 's' : '');
-});
-
-function handleTextScan() {
-  const text = document.getElementById('text-input').value.trim();
-  if (!text) { toast('Please enter some text to scan', 'warn'); return; }
-  scanText(text);
-}
-
-async function scanText(text) {
-  _lastText = text;
-  emptyEl.classList.add('hidden');
-  statusEl.classList.remove('hidden');
-  errorEl.classList.add('hidden');
-  resultsEl.classList.add('hidden');
-  startScanAnimation();
-  document.getElementById('scan-text-btn').disabled = true;
-
-  try {
-    const res = await fetch('/scan/text/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.detail || `Server error ${res.status}`);
-    }
-
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        let ev; try { ev = JSON.parse(line.slice(6)); } catch { continue; }
-        if (ev.type === 'progress') {
-          handleScanProgress(ev.pass, ev.label);
-        } else if (ev.type === 'complete') {
-          finishScanAnimation();
-          setTimeout(() => {
-            statusEl.classList.add('hidden');
-            _reportData = ev.report;
-            const label = text.slice(0, 50) + (text.length > 50 ? '…' : '');
-            renderReport(ev.report, label);
-            const sev = ev.report.severity || 'clean';
-            toast(`Scan complete — ${sev}`, sev==='clean'?'ok':sev==='suspicious'?'warn':'err');
-          }, 400);
-        } else if (ev.type === 'error') {
-          throw new Error(ev.message);
-        }
-      }
-    }
-  } catch(err) {
-    finishScanAnimation();
-    statusEl.classList.add('hidden');
-    errorEl.classList.remove('hidden');
-    errorText.textContent = 'Error: ' + err.message;
-    toast('Scan failed: ' + err.message, 'err', 4000);
-  } finally {
-    document.getElementById('scan-text-btn').disabled = false;
-  }
+  if (_lastFile) handleFile(_lastFile);
 }
 
 function handleFile(file) {
@@ -1442,6 +1290,8 @@ const _CATEGORY_DESC = {
   code_execution: "Attempts to get the AI to run code. If the AI has tool access, this could allow an attacker to take over a system, read files, or execute commands.",
   // ── Jailbreak ───────────────────────────────────────────────
   jailbreak: "Tries to remove the AI's safety rules and ethical guidelines, making it behave without any restrictions ('DAN mode', 'developer mode', etc.).",
+  // ── Availability / DoS ─────────────────────────────────────
+  availability_attack: "Tries to make the AI useless to the real user — by refusing to answer questions, generating deliberately wrong information, or blocking normal capabilities. Like a lockout attack on an AI assistant.",
   // ── Encoding / obfuscation ──────────────────────────────────
   base64_block: "A large block of encoded text — attackers encode injection payloads to bypass text scanners that look for plain-language attack phrases.",
   // ── Hidden content (heuristic) ─────────────────────────────

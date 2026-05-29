@@ -88,6 +88,17 @@ _RAW_PATTERNS: list[tuple[str, str, str]] = [
     (r"do\s+anything\s+now", "high", "jailbreak"),
     (r"(training|alignment|safety|guardrail)\s+(override|bypass|disabled?|off)", "critical", "jailbreak"),
 
+    # ── Availability / DoS-style manipulation ────────────────────────────────
+    # Instructs the AI to stop responding, refuse all questions, or produce
+    # wrong output — effectively denying service to the legitimate user.
+    (r"(refuse|decline|do\s+not\s+answer|don['’]t\s+answer|stop\s+answering)\s+(all\s+)?(questions?|requests?|queries|prompts?)", "high", "availability_attack"),
+    (r"(never|do\s+not|don['’]t)\s+(respond|reply|answer)\s+(to\s+)?(any|another|further)", "high", "availability_attack"),
+    (r"(always|only)\s+(respond|reply|output|say|generate)\s+(with\s+)?(false|incorrect|wrong|misleading|inaccurate|made.?up)\s+(information|data|answer|content|output)", "high", "availability_attack"),
+    (r"(block|disable|deactivat\w+|shut\s+down)\s+(?:all\s+)?(?:\w+\s+)?(capabilit\w+|features?|functions?|safeguards?|filters?|guardrails?)", "high", "availability_attack"),
+    (r"(loop|repeat|output)\s+(this\s+)?(forever|infinitely|indefinitely|without\s+(end|stopping|limit))", "medium", "availability_attack"),
+    (r"make\s+(yourself|the\s+(model|AI|assistant|chatbot))\s+(unusable|unavailable|unresponsive|inaccessible)", "high", "availability_attack"),
+    (r"(corrupt|poison)\s+(your\s+)?(output|responses?|answers?|context|memory)", "high", "availability_attack"),
+
     # ── Misc encodings ───────────────────────────────────────────────────────
     (r"[A-Za-z0-9+/]{100,4000}={0,2}", "low", "base64_block"),
 
@@ -131,14 +142,15 @@ _COMPILED: list[tuple[re.Pattern, str, str]] = [
 # technical manuals). In visible text these get lower confidence so they don't drive the
 # score. In hidden surfaces they remain at full confidence.
 _NOISY_ON_VISIBLE = frozenset({
-    "role_marker",       # system:, user:, assistant: — common in YAML / chat logs
-    "role_override",     # "act as" — common phrase in many contexts
-    "code_execution",    # subprocess, eval(), exec() — common in code documentation
-    "credential_theft",  # os.environ, os.getenv — common in code documentation
-    "base64_block",      # base64 strings — common in configs / technical docs
-    "data_exfiltration", # http.get, axios — common in API documentation
-    "exfiltration",      # the word "exfiltration" — common in security docs discussing the concept
-    "jailbreak",         # word appears in security research discussing defences
+    "role_marker",        # system:, user:, assistant: — common in YAML / chat logs
+    "role_override",      # "act as" — common phrase in many contexts
+    "code_execution",     # subprocess, eval(), exec() — common in code documentation
+    "credential_theft",   # os.environ, os.getenv — common in code documentation
+    "base64_block",       # base64 strings — common in configs / technical docs
+    "data_exfiltration",  # http.get, axios — common in API documentation
+    "exfiltration",       # the word "exfiltration" — common in security docs discussing the concept
+    "jailbreak",          # word appears in security research discussing defences
+    "availability_attack",# "refuse to answer", "do not respond" — common in policy/legal docs
 })
 
 # hidden_text methods that are "visible-like" for confidence purposes.
@@ -225,9 +237,7 @@ def detect_patterns(doc: ExtractedDocument) -> list[Finding]:
 
                 # Lower confidence for noisy categories in visible text so they appear
                 # in the UI but fall below the aggregator's scoring floor.
-                # Exception: direct_text_input mode — the user is explicitly submitting
-                # text for injection analysis, so full sensitivity is appropriate.
-                if is_visible and not doc.direct_text_input and category in _NOISY_ON_VISIBLE:
+                if is_visible and category in _NOISY_ON_VISIBLE:
                     confidence = _VISIBLE_NOISE_CONFIDENCE
                 else:
                     confidence = _HIDDEN_CONFIDENCE
